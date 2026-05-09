@@ -225,6 +225,22 @@ def normalize_weights(
 class DataConfig(ExtraForbidModel):
     loader: str = "ablation_study_jepa.data.loaders:load_price_panel"
     data_dir: Path = Path("data/prices")
+    macro_data_path: Path | None = Path("data/macro/fred_md/fred_md_1960_2025.csv")
+    macro_date_column: str = "date"
+    macro_feature_columns: list[str] = Field(
+        default_factory=lambda: [
+            "S&P 500",
+            "FEDFUNDS",
+            "GS1",
+            "GS5",
+            "GS10",
+            "OILPRICEx",
+            "S&P: indust",
+            "S&P div yield",
+            "S&P PE ratio",
+        ]
+    )
+    macro_missing: Literal["error", "ignore"] = "ignore"
     tickers: list[str] | None = None
     start_date: str | None = None
     end_date: str | None = None
@@ -237,22 +253,55 @@ class DataConfig(ExtraForbidModel):
     trading_day_indexing: bool = True
     feature_columns: list[str] = Field(
         default_factory=lambda: [
+            "Price Open",
+            "Price High",
+            "Price Low",
+            "Price Close",
+            "Price Adj_Close",
+            "Volume",
             "return_1d",
             "return_5d",
             "return_20d",
             "volatility_20d",
             "volume_zscore",
+            "S&P 500",
+            "FEDFUNDS",
+            "GS1",
+            "GS5",
+            "GS10",
+            "OILPRICEx",
+            "S&P div yield",
+            "S&P PE ratio",
         ]
     )
     fast_feature_columns: list[str] = Field(
-        default_factory=lambda: ["open", "high", "low", "close", "volume"]
+        default_factory=lambda: [
+            "Price Open",
+            "Price High",
+            "Price Low",
+            "Price Close",
+            "Price Adj_Close",
+            "Volume",
+        ]
     )
-    slow_feature_columns: list[str] = Field(default_factory=list)
+    slow_feature_columns: list[str] = Field(
+        default_factory=lambda: [
+            "S&P 500",
+            "FEDFUNDS",
+            "GS1",
+            "GS5",
+            "GS10",
+            "OILPRICEx",
+            "S&P div yield",
+            "S&P PE ratio",
+        ]
+    )
     static_feature_columns: list[str] = Field(default_factory=list)
     target_column: str = "target_return"
     asset_id_column: str = "ticker"
     date_column: str = "date"
-    price_column: str = "close"
+    price_column: str = "Price Close"
+    volume_column: str = "Volume"
     sector_column: str | None = "sector"
     scaler_type: Literal["standard", "robust", "none"] = "standard"
     fit_scaler_on_train_only: bool = True
@@ -271,14 +320,29 @@ class NormalizationConfig(ExtraForbidModel):
 
 
 class FeatureConfig(ExtraForbidModel):
-    price_column: str = "close"
+    price_column: str = "Price Close"
+    volume_column: str = "Volume"
     sequence: list[str] = Field(
         default_factory=lambda: [
+            "Price Open",
+            "Price High",
+            "Price Low",
+            "Price Close",
+            "Price Adj_Close",
+            "Volume",
             "return_1d",
             "return_5d",
             "return_20d",
             "volatility_20d",
             "volume_zscore",
+            "S&P 500",
+            "FEDFUNDS",
+            "GS1",
+            "GS5",
+            "GS10",
+            "OILPRICEx",
+            "S&P div yield",
+            "S&P PE ratio",
         ]
     )
     static: list[str] = Field(default_factory=list)
@@ -374,6 +438,7 @@ class ExperimentConfig(ExtraForbidModel):
         self.model.prediction_horizon = self.features.target.horizon
         self.data.target_column = self.features.target.column
         self.data.price_column = self.features.price_column
+        self.data.volume_column = self.features.volume_column
         self.data.feature_columns = list(self.features.sequence)
         self.data.static_feature_columns = list(self.features.static)
         self.data.scaler_type = self.features.normalization.method

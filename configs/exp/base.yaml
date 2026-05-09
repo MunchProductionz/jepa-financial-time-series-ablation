@@ -4,44 +4,91 @@ run_name: base_tft_1d
 data:
   loader: ablation_study_jepa.data.loaders:load_price_panel
   data_dir: data/prices
+  macro_data_path: data/macro/fred_md/fred_md_1960_2025.csv
+  macro_date_column: date
+  macro_feature_columns:
+    - "S&P 500"
+    - FEDFUNDS
+    - GS1
+    - GS5
+    - GS10
+    - OILPRICEx
+    - "S&P: indust"
+    - "S&P div yield"
+    - "S&P PE ratio"
+  macro_missing: ignore
   tickers: ["AAPL", "MSFT", "NVDA", "AMZN"]
-  start_date: "2015-01-01"
-  end_date: "2019-12-31"
+  start_date: "1960-01-01"
+  end_date: "2025-12-31"
   trading_day_indexing: true
   feature_columns:
+    - "Price Open"
+    - "Price High"
+    - "Price Low"
+    - "Price Close"
+    - "Price Adj_Close"
+    - Volume
     - return_1d
     - return_5d
     - return_20d
     - volatility_20d
     - volume_zscore
-    - beta
-    - pe_ratio
-    - debt_to_equity
-    - interest_rate
-    - vix
-  fast_feature_columns: ["open", "high", "low", "close", "volume"]
-  slow_feature_columns: ["beta", "pe_ratio", "debt_to_equity", "interest_rate", "vix"]
+    - "S&P 500"
+    - FEDFUNDS
+    - GS1
+    - GS5
+    - GS10
+    - OILPRICEx
+    - "S&P div yield"
+    - "S&P PE ratio"
+  fast_feature_columns:
+    - "Price Open"
+    - "Price High"
+    - "Price Low"
+    - "Price Close"
+    - "Price Adj_Close"
+    - Volume
+  slow_feature_columns:
+    - "S&P 500"
+    - FEDFUNDS
+    - GS1
+    - GS5
+    - GS10
+    - OILPRICEx
+    - "S&P div yield"
+    - "S&P PE ratio"
   target_column: target_return
   asset_id_column: ticker
   date_column: date
-  price_column: close
+  price_column: "Price Close"
+  volume_column: Volume
   scaler_type: standard # values: standard, robust, none
   fit_scaler_on_train_only: true
   prediction_timing: after_close # values: after_close, before_close
 
 features:
-  price_column: close
+  price_column: "Price Close"
+  volume_column: Volume
   sequence:
+    - "Price Open"
+    - "Price High"
+    - "Price Low"
+    - "Price Close"
+    - "Price Adj_Close"
+    - Volume
     - return_1d
     - return_5d
     - return_20d
     - volatility_20d
     - volume_zscore
-    - beta
-    - pe_ratio
-    - debt_to_equity
-    - interest_rate
-    - vix
+    - "S&P 500"
+    - FEDFUNDS
+    - GS1
+    - GS5
+    - GS10
+    - OILPRICEx
+    - "S&P div yield"
+    - "S&P PE ratio"
   static: []
   target:
     column: target_return

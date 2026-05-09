@@ -8,9 +8,25 @@ The repo is built for ablations, not production trading. It focuses on clean exp
 
 ```bash
 uv sync --dev
-uv run ablation-study-jepa build-sample-data --output data/prices/panel.csv
+uv run ablation-study-jepa download-yahoo-prices \
+  --tickers AAPL,MSFT,NVDA,AMZN \
+  --start-date 1960-01-01 \
+  --end-date 2025-12-31 \
+  --output-dir data/prices
+
+uv run ablation-study-jepa download-fred-md \
+  --vintage current \
+  --start-date 1960-01-01 \
+  --end-date 2025-12-31 \
+  --output-dir data/macro/fred_md
+
 uv run ablation-study-jepa run --config configs/exp/jepa_ablation.yaml
 ```
+
+Yahoo Finance files are written one ticker per CSV, for example
+`data/prices/AAPL.csv`, and existing ticker files are skipped unless
+`--overwrite` is passed. The FRED-MD command stores the raw downloaded vintage
+and a filtered parsed CSV such as `data/macro/fred_md/fred_md_1960_2025.csv`.
 
 Run tests with the same `uv` environment:
 

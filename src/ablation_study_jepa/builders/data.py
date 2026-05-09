@@ -31,6 +31,11 @@ def build_data(config: ExperimentConfig) -> PreparedData:
         end_date=config.data.end_date,
         date_column=config.data.date_column,
         asset_id_column=config.data.asset_id_column,
+        price_columns=config.data.fast_feature_columns,
+        macro_data_path=config.data.macro_data_path,
+        macro_date_column=config.data.macro_date_column,
+        macro_feature_columns=config.data.macro_feature_columns,
+        macro_missing=config.data.macro_missing,
     )
     cleaned = clean_price_panel(
         raw,
@@ -38,6 +43,17 @@ def build_data(config: ExperimentConfig) -> PreparedData:
         date_column=config.data.date_column,
         required_columns=[config.data.price_column],
     )
+    missing_fast = [
+        column for column in config.data.fast_feature_columns if column not in cleaned.columns
+    ]
+    missing_slow = [
+        column for column in config.data.slow_feature_columns if column not in cleaned.columns
+    ]
+    if missing_fast:
+        raise ValueError(f"Configured fast feature columns were not loaded: {missing_fast}")
+    if missing_slow:
+        raise ValueError(f"Configured slow feature columns were not loaded: {missing_slow}")
+
     featured = build_features(cleaned, config)
     missing_features = [column for column in config.data.feature_columns if column not in featured.columns]
     if missing_features:
@@ -70,4 +86,3 @@ def build_data(config: ExperimentConfig) -> PreparedData:
         scaler=scaler,
         splits=splits,
     )
-

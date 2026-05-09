@@ -16,5 +16,5 @@ def build_features(frame: pd.DataFrame, config: ExperimentConfig) -> pd.DataFram
         price_column=config.features.price_column,
         target_column=config.features.target.column,
         target_horizon=config.features.target.horizon,
+        volume_column=config.features.volume_column,
     )
-
