@@ -18,8 +18,8 @@ data:
     - "S&P PE ratio"
   macro_missing: ignore
   tickers: ["AAPL", "MSFT", "NVDA", "AMZN"]
-  start_date: "1960-01-01"
-  end_date: "2025-12-31"
+  start_date: "2015-01-01" # earliest: "1960-01-01"
+  end_date: "2025-12-31" # latest: "2025-12-31"
   trading_day_indexing: true
   feature_columns:
     - "Price Open"
@@ -119,15 +119,20 @@ features:
     fit_on_train_only: true
 
 splits:
-  method: date # values: date
-  train_end: "2016-12-31"
-  val_end: "2017-12-31"
-  test_end: "2018-06-30"
+  method: fraction # values: date, fraction
+  train: 0.7
+  validation: 0.2
+  test: 0.1
+  # For method: date, set explicit chronological cutoffs:
+  # train_end: "2015-12-31"
+  # val_end: "2022-12-31"
+  # test_end: "2025-12-31"
 
 dataset:
   lookback: 60
   batch_size: 64
   num_workers: 9
+  persistent_workers: true
   drop_last: false
   pin_memory: false
   include_future_window: true
