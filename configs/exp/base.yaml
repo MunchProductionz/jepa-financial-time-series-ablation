@@ -28,6 +28,11 @@ data:
     - "Price Close"
     - "Price Adj_Close"
     - Volume
+    - beta
+    - pe_ratio
+    - debt_to_equity
+    - interest_rate
+    - vix
     - return_1d
     - return_5d
     - return_20d
@@ -48,6 +53,11 @@ data:
     - "Price Close"
     - "Price Adj_Close"
     - Volume
+    - beta
+    - pe_ratio
+    - debt_to_equity
+    - interest_rate
+    - vix
   slow_feature_columns:
     - "S&P 500"
     - FEDFUNDS
@@ -62,6 +72,7 @@ data:
   date_column: date
   price_column: "Price Close"
   volume_column: Volume
+  sector_one_hot_prefix: sector_
   scaler_type: standard # values: standard, robust, none
   fit_scaler_on_train_only: true
   prediction_timing: after_close # values: after_close, before_close
@@ -76,6 +87,11 @@ features:
     - "Price Close"
     - "Price Adj_Close"
     - Volume
+    - beta
+    - pe_ratio
+    - debt_to_equity
+    - interest_rate
+    - vix
     - return_1d
     - return_5d
     - return_20d
@@ -89,7 +105,11 @@ features:
     - OILPRICEx
     - "S&P div yield"
     - "S&P PE ratio"
-  static: []
+  static:
+    - sector_consumer
+    - sector_semiconductors
+    - sector_technology
+    - sector_unknown
   target:
     column: target_return
     horizon: 1

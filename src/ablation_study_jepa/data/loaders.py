@@ -122,6 +122,11 @@ def _normalize_price_columns(
     asset_id_column: str,
 ) -> pd.DataFrame:
     normalized = frame.rename(columns=price_column_renames).copy()
+    if "Price Adj_Close" in price_columns and "Price Adj_Close" not in normalized.columns:
+        if "Price Close" not in normalized.columns:
+            raise ValueError("Cannot synthesize Price Adj_Close because Price Close is missing")
+        normalized["Price Adj_Close"] = normalized["Price Close"]
+
     required = [asset_id_column, date_column, *price_columns]
     missing = [column for column in required if column not in normalized.columns]
     if missing:
@@ -129,7 +134,8 @@ def _normalize_price_columns(
 
     for column in price_columns:
         normalized[column] = pd.to_numeric(normalized[column], errors="coerce")
-    return normalized[[asset_id_column, date_column, *price_columns]]
+    ordered = _deduplicate([asset_id_column, date_column, *price_columns, *normalized.columns])
+    return normalized[ordered]
 
 
 def merge_macro_features(

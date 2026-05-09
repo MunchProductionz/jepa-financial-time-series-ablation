@@ -40,6 +40,7 @@ def build_sample_panel(
                     "high": high,
                     "low": low,
                     "close": close,
+                    "adj_close": close,
                     "volume": volume,
                     "sector": sectors[idx % len(sectors)],
                     "beta": beta,
@@ -51,4 +52,3 @@ def build_sample_panel(
             )
         )
     return pd.concat(frames, ignore_index=True)
-
