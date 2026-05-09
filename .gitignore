@@ -223,4 +223,5 @@ lightning_logs/
 predictions/*.csv
 predictions/*.json
 data/prices/*.csv
+data/macro/fred_md/*.csv
 *.ckpt
