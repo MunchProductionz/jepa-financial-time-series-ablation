@@ -1,8 +1,8 @@
 program: ablation-study-jepa
-method: grid
+method: grid # values: grid, random, bayes
 metric:
   name: val/mse
-  goal: minimize
+  goal: minimize # values: minimize, maximize
 parameters:
   config:
     value: configs/exp/jepa_ablation.yaml
@@ -12,4 +12,3 @@ parameters:
     values: [0.001, 0.01, 0.05, 0.1, 0.2]
   jepa.projection_dim:
     values: [32, 64, 128, 256]
-
