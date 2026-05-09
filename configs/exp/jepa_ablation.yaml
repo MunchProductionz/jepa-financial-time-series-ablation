@@ -16,18 +16,18 @@ jepa:
   enabled: true
   num_jepa_layers: 1
   selected_layers: null
-  layer_selection_mode: last_L
+  layer_selection_mode: last_L # values: last_L, manual, all, none
   projection_dim: 128
-  predictor_type: mlp
+  predictor_type: mlp # values: linear, mlp, residual_mlp
   horizons: [1]
   temperature: 0.1
   global_weight: 0.05
-  layer_weight_scheme: linear
+  layer_weight_scheme: linear # values: uniform, linear, exponential, manual
   layer_weight_gamma: 2.0
   manual_layer_weights: null
-  horizon_weight_scheme: uniform
+  horizon_weight_scheme: uniform # values: uniform, linear, exponential, manual
   manual_horizon_weights: null
-  negative_strategy: mixed
+  negative_strategy: mixed # values: in_batch_all, in_batch_filtered, same_asset_far_time, different_asset_different_time, mixed
   num_negatives: null
   exclusion_window: 5
   allow_same_date_cross_asset_negatives: false
