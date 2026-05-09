@@ -31,7 +31,6 @@ def build_data(config: ExperimentConfig) -> PreparedData:
         end_date=config.data.end_date,
         date_column=config.data.date_column,
         asset_id_column=config.data.asset_id_column,
-        price_columns=config.data.fast_feature_columns,
         macro_data_path=config.data.macro_data_path,
         macro_date_column=config.data.macro_date_column,
         macro_feature_columns=config.data.macro_feature_columns,
@@ -43,6 +42,12 @@ def build_data(config: ExperimentConfig) -> PreparedData:
         date_column=config.data.date_column,
         required_columns=[config.data.price_column],
     )
+    cleaned = add_sector_one_hot_features(
+        cleaned,
+        sector_column=config.data.sector_column,
+        static_feature_columns=config.data.static_feature_columns,
+        prefix=config.data.sector_one_hot_prefix,
+    )
     missing_fast = [
         column for column in config.data.fast_feature_columns if column not in cleaned.columns
     ]
@@ -53,6 +58,11 @@ def build_data(config: ExperimentConfig) -> PreparedData:
         raise ValueError(f"Configured fast feature columns were not loaded: {missing_fast}")
     if missing_slow:
         raise ValueError(f"Configured slow feature columns were not loaded: {missing_slow}")
+    missing_static = [
+        column for column in config.data.static_feature_columns if column not in cleaned.columns
+    ]
+    if missing_static:
+        raise ValueError(f"Configured static feature columns were not created/found: {missing_static}")
 
     featured = build_features(cleaned, config)
     missing_features = [column for column in config.data.feature_columns if column not in featured.columns]
@@ -86,3 +96,40 @@ def build_data(config: ExperimentConfig) -> PreparedData:
         scaler=scaler,
         splits=splits,
     )
+
+
+def add_sector_one_hot_features(
+    frame: pd.DataFrame,
+    sector_column: str | None,
+    static_feature_columns: list[str],
+    prefix: str = "sector_",
+) -> pd.DataFrame:
+    """Create configured static sector one-hot columns.
+
+    The expected one-hot columns are driven by config rather than inferred so the
+    model input shape is stable across train/validation/test and across runs.
+    """
+
+    sector_columns = [column for column in static_feature_columns if column.startswith(prefix)]
+    if not sector_columns:
+        return frame
+
+    result = frame.copy()
+    if sector_column is not None and sector_column in result.columns:
+        sectors = result[sector_column].fillna("unknown").astype(str).str.strip().str.lower()
+    else:
+        sectors = pd.Series("unknown", index=result.index)
+
+    known_categories = {column.removeprefix(prefix) for column in sector_columns}
+    unknown_column = f"{prefix}unknown" if "unknown" in known_categories else None
+    matched = pd.Series(False, index=result.index)
+    for column in sector_columns:
+        category = column.removeprefix(prefix)
+        if category == "unknown":
+            continue
+        values = sectors == category
+        result[column] = values.astype(float)
+        matched |= values
+    if unknown_column is not None:
+        result[unknown_column] = (~matched).astype(float)
+    return result

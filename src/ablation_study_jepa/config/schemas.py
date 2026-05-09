@@ -259,6 +259,11 @@ class DataConfig(ExtraForbidModel):
             "Price Close",
             "Price Adj_Close",
             "Volume",
+            "beta",
+            "pe_ratio",
+            "debt_to_equity",
+            "interest_rate",
+            "vix",
             "return_1d",
             "return_5d",
             "return_20d",
@@ -282,6 +287,11 @@ class DataConfig(ExtraForbidModel):
             "Price Close",
             "Price Adj_Close",
             "Volume",
+            "beta",
+            "pe_ratio",
+            "debt_to_equity",
+            "interest_rate",
+            "vix",
         ]
     )
     slow_feature_columns: list[str] = Field(
@@ -296,13 +306,21 @@ class DataConfig(ExtraForbidModel):
             "S&P PE ratio",
         ]
     )
-    static_feature_columns: list[str] = Field(default_factory=list)
+    static_feature_columns: list[str] = Field(
+        default_factory=lambda: [
+            "sector_consumer",
+            "sector_semiconductors",
+            "sector_technology",
+            "sector_unknown",
+        ]
+    )
     target_column: str = "target_return"
     asset_id_column: str = "ticker"
     date_column: str = "date"
     price_column: str = "Price Close"
     volume_column: str = "Volume"
     sector_column: str | None = "sector"
+    sector_one_hot_prefix: str = "sector_"
     scaler_type: Literal["standard", "robust", "none"] = "standard"
     fit_scaler_on_train_only: bool = True
     prediction_timing: Literal["after_close", "before_close"] = "after_close"
@@ -330,6 +348,11 @@ class FeatureConfig(ExtraForbidModel):
             "Price Close",
             "Price Adj_Close",
             "Volume",
+            "beta",
+            "pe_ratio",
+            "debt_to_equity",
+            "interest_rate",
+            "vix",
             "return_1d",
             "return_5d",
             "return_20d",
@@ -345,7 +368,14 @@ class FeatureConfig(ExtraForbidModel):
             "S&P PE ratio",
         ]
     )
-    static: list[str] = Field(default_factory=list)
+    static: list[str] = Field(
+        default_factory=lambda: [
+            "sector_consumer",
+            "sector_semiconductors",
+            "sector_technology",
+            "sector_unknown",
+        ]
+    )
     target: TargetFeatureConfig = Field(default_factory=TargetFeatureConfig)
     normalization: NormalizationConfig = Field(default_factory=NormalizationConfig)
 

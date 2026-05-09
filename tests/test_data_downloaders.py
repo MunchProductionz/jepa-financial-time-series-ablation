@@ -2,6 +2,7 @@ from pathlib import Path
 
 import pandas as pd
 
+from ablation_study_jepa.builders.data import add_sector_one_hot_features
 from ablation_study_jepa.data.fred_md import (
     fred_md_candidate_urls,
     parse_fred_md_file,
@@ -130,3 +131,41 @@ def test_price_loader_renames_prices_and_asof_merges_macro(tmp_path: Path) -> No
     assert panel["Price Close"].tolist() == [1.5, 2.5]
     assert panel["Volume"].tolist() == [100, 200]
     assert panel["S&P 500"].tolist() == [5000, 5100]
+
+
+def test_price_loader_synthesizes_adj_close_and_preserves_panel_extras(tmp_path: Path) -> None:
+    price_dir = tmp_path / "prices"
+    price_dir.mkdir()
+    (price_dir / "panel.csv").write_text(
+        "ticker,date,open,high,low,close,volume,sector,beta,pe_ratio,debt_to_equity\n"
+        "AAPL,2025-01-02,1,2,0.5,1.5,100,technology,1.2,24,0.4\n"
+    )
+
+    panel = load_price_panel(price_dir, macro_data_path=None)
+
+    assert panel["Price Adj_Close"].tolist() == [1.5]
+    assert panel["sector"].tolist() == ["technology"]
+    assert panel["beta"].tolist() == [1.2]
+
+
+def test_sector_one_hot_features_use_configured_static_columns() -> None:
+    frame = pd.DataFrame({"sector": ["technology", "consumer", "other", None]})
+
+    encoded = add_sector_one_hot_features(
+        frame,
+        sector_column="sector",
+        static_feature_columns=[
+            "sector_consumer",
+            "sector_technology",
+            "sector_unknown",
+        ],
+    )
+
+    assert encoded[["sector_consumer", "sector_technology", "sector_unknown"]].to_dict(
+        "records"
+    ) == [
+        {"sector_consumer": 0.0, "sector_technology": 1.0, "sector_unknown": 0.0},
+        {"sector_consumer": 1.0, "sector_technology": 0.0, "sector_unknown": 0.0},
+        {"sector_consumer": 0.0, "sector_technology": 0.0, "sector_unknown": 1.0},
+        {"sector_consumer": 0.0, "sector_technology": 0.0, "sector_unknown": 1.0},
+    ]
