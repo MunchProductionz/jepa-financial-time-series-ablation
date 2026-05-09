@@ -1,0 +1,143 @@
+seed: 42
+run_name: base_tft_1d
+
+data:
+  loader: ablation_study_jepa.data.loaders:load_price_panel
+  data_dir: data/prices
+  tickers: ["AAPL", "MSFT", "NVDA", "AMZN"]
+  start_date: "2015-01-01"
+  end_date: "2019-12-31"
+  trading_day_indexing: true
+  feature_columns:
+    - return_1d
+    - return_5d
+    - return_20d
+    - volatility_20d
+    - volume_zscore
+    - beta
+    - pe_ratio
+    - debt_to_equity
+    - interest_rate
+    - vix
+  fast_feature_columns: ["open", "high", "low", "close", "volume"]
+  slow_feature_columns: ["beta", "pe_ratio", "debt_to_equity", "interest_rate", "vix"]
+  target_column: target_return
+  asset_id_column: ticker
+  date_column: date
+  price_column: close
+  scaler_type: standard
+  fit_scaler_on_train_only: true
+  prediction_timing: after_close
+
+features:
+  price_column: close
+  sequence:
+    - return_1d
+    - return_5d
+    - return_20d
+    - volatility_20d
+    - volume_zscore
+    - beta
+    - pe_ratio
+    - debt_to_equity
+    - interest_rate
+    - vix
+  static: []
+  target:
+    column: target_return
+    horizon: 1
+    method: forward_return
+  normalization:
+    method: standard
+    fit_on_train_only: true
+
+splits:
+  method: date
+  train_end: "2016-12-31"
+  val_end: "2017-12-31"
+  test_end: "2018-06-30"
+
+dataset:
+  lookback: 60
+  batch_size: 64
+  num_workers: 0
+  drop_last: false
+  pin_memory: false
+  include_future_window: true
+  future_window: 60
+
+model:
+  target: ablation_study_jepa.models.tft:TFT
+  criterion: torch.nn:MSELoss
+  hidden_dim: 128
+  num_transformer_blocks: 4
+  num_attention_heads: 4
+  num_lstm_layers: 1
+  dropout: 0.1
+  sequence_length: 60
+  prediction_horizon: 1
+  use_causal_mask: true
+  use_variable_selection: false
+  output_dim: 1
+  optimizer:
+    learning_rate: 0.0003
+    weight_decay: 0.00001
+
+jepa:
+  enabled: false
+  num_jepa_layers: 0
+  selected_layers: null
+  layer_selection_mode: none
+  projection_dim: 128
+  predictor_type: mlp
+  horizons: [1]
+  temperature: 0.1
+  global_weight: 0.05
+  layer_weight_scheme: linear
+  layer_weight_gamma: 2.0
+  manual_layer_weights: null
+  horizon_weight_scheme: uniform
+  manual_horizon_weights: null
+  negative_strategy: mixed
+  num_negatives: null
+  exclusion_window: 5
+  allow_same_date_cross_asset_negatives: false
+  allow_same_sector_negatives: true
+  sector_filtering: false
+  same_asset_negative_min_gap: 20
+  memory_bank_enabled: false
+  memory_bank_size: 4096
+
+training:
+  batch_size: 64
+  learning_rate: 0.0003
+  weight_decay: 0.00001
+  max_epochs: 10
+  accelerator: auto
+  devices: auto
+  precision: 32
+  early_stopping: true
+  early_stopping_patience: 5
+  gradient_clip_val: 1.0
+  log_every_n_steps: 10
+  seed: 42
+
+logging:
+  wandb:
+    enabled: false
+    project: ablation-study-jepa
+    entity: null
+    mode: offline
+    group: null
+    tags: ["baseline"]
+
+evaluation:
+  metrics:
+    - mse
+    - mae
+    - correlation
+    - directional_accuracy
+    - spearman_rank_ic
+    - top_bottom_quantile_spread
+  save_predictions: true
+  predictions_dir: predictions

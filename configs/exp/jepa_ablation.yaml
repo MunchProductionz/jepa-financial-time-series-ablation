@@ -1,0 +1,42 @@
+defaults:
+  - base
+  - _self_
+
+run_name: tft_jepa_last1_h1_lambda005
+
+model:
+  target: ablation_study_jepa.models.tft_with_jepa:TFTWithJEPA
+  hidden_dim: 128
+  num_transformer_blocks: 4
+  num_attention_heads: 4
+  dropout: 0.1
+  use_causal_mask: true
+
+jepa:
+  enabled: true
+  num_jepa_layers: 1
+  selected_layers: null
+  layer_selection_mode: last_L
+  projection_dim: 128
+  predictor_type: mlp
+  horizons: [1]
+  temperature: 0.1
+  global_weight: 0.05
+  layer_weight_scheme: linear
+  layer_weight_gamma: 2.0
+  manual_layer_weights: null
+  horizon_weight_scheme: uniform
+  manual_horizon_weights: null
+  negative_strategy: mixed
+  num_negatives: null
+  exclusion_window: 5
+  allow_same_date_cross_asset_negatives: false
+  allow_same_sector_negatives: true
+  sector_filtering: false
+  same_asset_negative_min_gap: 20
+  memory_bank_enabled: false
+  memory_bank_size: 4096
+
+logging:
+  wandb:
+    tags: ["jepa", "last_L", "horizon_1", "lambda_0.05"]

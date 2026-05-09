@@ -216,3 +216,11 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# Project experiment artifacts
+wandb/
+lightning_logs/
+predictions/*.csv
+predictions/*.json
+data/prices/*.csv
+*.ckpt

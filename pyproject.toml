@@ -1,0 +1,39 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ablation-study-jepa"
+version = "0.1.0"
+description = "Config-driven PyTorch research codebase for JEPA auxiliary losses in stock-return forecasting."
+readme = "README.md"
+requires-python = ">=3.11,<3.13"
+license = { text = "MIT" }
+authors = [{ name = "Research contributors" }]
+dependencies = [
+  "numpy>=1.24",
+  "pandas>=2.0",
+  "pydantic>=2.0",
+  "PyYAML>=6.0",
+  "torch>=2.1",
+  "lightning>=2.2",
+  "scipy>=1.10",
+  "wandb>=0.16",
+]
+
+[dependency-groups]
+dev = ["pytest>=8.0", "ruff>=0.5"]
+
+[project.scripts]
+ablation-study-jepa = "ablation_study_jepa.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
