@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any
 
 import numpy as np
+import pandas as pd
 import torch
 
 from ablation_study_jepa.builders.data import build_data
@@ -18,7 +19,11 @@ from ablation_study_jepa.builders.trainer import build_data_module, build_traine
 from ablation_study_jepa.config.loader import load_config
 from ablation_study_jepa.config.schemas import ExperimentConfig
 from ablation_study_jepa.evaluation.metrics import compute_metrics
-from ablation_study_jepa.evaluation.predictions import collect_predictions, save_predictions
+from ablation_study_jepa.evaluation.predictions import (
+    collect_predictions,
+    make_prediction_run_dir,
+    save_predictions,
+)
 from ablation_study_jepa.training.lightning_module import ReturnPredictionLightningModule
 
 
@@ -77,35 +82,39 @@ class ExperimentRunner:
 
         val_predictions = collect_predictions(model_bundle.model, data_module.val_dataloader())
         test_predictions = collect_predictions(model_bundle.model, data_module.test_dataloader())
-        val_metrics = compute_metrics(
-            val_predictions["y_true"].to_numpy(),
-            val_predictions["y_pred"].to_numpy(),
+        val_metrics = _compute_prediction_metrics(
+            val_predictions,
             self.config.evaluation.metrics,
+            split="val",
+            require_nonempty=True,
         )
-        test_metrics = compute_metrics(
-            test_predictions["y_true"].to_numpy(),
-            test_predictions["y_pred"].to_numpy(),
+        test_metrics = _compute_prediction_metrics(
+            test_predictions,
             self.config.evaluation.metrics,
+            split="test",
+            require_nonempty=False,
         )
 
         prediction_paths: dict[str, Path] = {}
         config_dict = self.config.model_dump(mode="json")
+        artifact_dir = make_prediction_run_dir(
+            self.config.evaluation.predictions_dir,
+            self.config.run_name,
+            config_dict,
+            tags=self.config.logging.wandb.tags,
+        )
         if self.config.evaluation.save_predictions:
             prediction_paths["val"] = save_predictions(
                 val_predictions,
-                self.config.evaluation.predictions_dir,
-                self.config.run_name,
+                artifact_dir,
                 "val",
-                config_dict,
             )
             prediction_paths["test"] = save_predictions(
                 test_predictions,
-                self.config.evaluation.predictions_dir,
-                self.config.run_name,
+                artifact_dir,
                 "test",
-                config_dict,
             )
-        metrics_path = self._save_metrics(val_metrics, test_metrics, config_dict)
+        metrics_path = self._save_metrics(val_metrics, test_metrics, config_dict, artifact_dir)
         print(json.dumps({"val": val_metrics, "test": test_metrics}, indent=2, sort_keys=True))
         return ExperimentResult(
             run_name=self.config.run_name,
@@ -120,10 +129,10 @@ class ExperimentRunner:
         val_metrics: dict[str, float],
         test_metrics: dict[str, float],
         config_dict: dict[str, Any],
+        output_dir: Path,
     ) -> Path:
-        output_dir = self.config.evaluation.predictions_dir
         output_dir.mkdir(parents=True, exist_ok=True)
-        path = output_dir / f"{self.config.run_name or 'run'}_metrics.json"
+        path = output_dir / "metrics.json"
         payload = {
             "run_name": self.config.run_name,
             "val": val_metrics,
@@ -141,3 +150,23 @@ def seed_everything(seed: int) -> None:
     if torch.cuda.is_available():
         torch.cuda.manual_seed_all(seed)
 
+
+def _compute_prediction_metrics(
+    predictions: pd.DataFrame,
+    metric_names: list[str],
+    split: str,
+    require_nonempty: bool,
+) -> dict[str, float]:
+    required_columns = {"y_true", "y_pred"}
+    missing = sorted(required_columns.difference(predictions.columns))
+    if missing:
+        raise RuntimeError(f"{split} predictions are missing required columns: {missing}")
+    if predictions.empty:
+        if require_nonempty:
+            raise RuntimeError(f"{split} predictions are empty")
+        return {name: float("nan") for name in metric_names}
+    return compute_metrics(
+        predictions["y_true"].to_numpy(),
+        predictions["y_pred"].to_numpy(),
+        metric_names,
+    )

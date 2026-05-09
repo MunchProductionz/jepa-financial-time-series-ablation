@@ -1,5 +1,5 @@
 from ablation_study_jepa.config.loader import load_config
-from ablation_study_jepa.config.schemas import JEPAConfig, normalize_weights
+from ablation_study_jepa.config.schemas import JEPAConfig, SplitsConfig, normalize_weights
 
 
 def test_last_l_layer_selection_and_linear_weights() -> None:
@@ -28,3 +28,8 @@ def test_yaml_defaults_loader_merges_base_config() -> None:
     assert config.data.fit_scaler_on_train_only is True
     assert config.model.use_causal_mask is True
 
+
+def test_fraction_split_config_requires_fractions_sum_to_one() -> None:
+    config = SplitsConfig(method="fraction", train=0.7, validation=0.2, test=0.1)
+
+    assert config.method == "fraction"

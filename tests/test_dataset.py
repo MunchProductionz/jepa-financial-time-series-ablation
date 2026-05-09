@@ -2,6 +2,7 @@ import pandas as pd
 import pytest
 
 from ablation_study_jepa.data.preprocessing import PanelScaler
+from ablation_study_jepa.data.preprocessing import make_fraction_splits
 from ablation_study_jepa.data.synthetic import build_sample_panel
 from ablation_study_jepa.datasets.windowed import WindowedStockDataset
 from ablation_study_jepa.features.returns import add_return_features
@@ -47,3 +48,21 @@ def test_window_dataset_excludes_train_targets_beyond_split_end() -> None:
         group = dataset.groups[sample.asset_id]
         target_date = pd.Timestamp(group["target_return_date"].iloc[sample.anchor_position])
         assert target_date <= train_end
+
+
+def test_fraction_splits_use_chronological_available_dates() -> None:
+    frame = pd.DataFrame({"date": pd.bdate_range("2024-01-01", periods=10)})
+
+    splits = make_fraction_splits(
+        frame,
+        date_column="date",
+        train_fraction=0.7,
+        validation_fraction=0.2,
+        test_fraction=0.1,
+    )
+
+    assert splits["train"].end == pd.Timestamp(frame["date"].iloc[6])
+    assert splits["val"].start == splits["train"].end
+    assert splits["val"].end == pd.Timestamp(frame["date"].iloc[8])
+    assert splits["test"].start == splits["val"].end
+    assert splits["test"].end == pd.Timestamp(frame["date"].iloc[9])

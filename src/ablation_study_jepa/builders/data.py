@@ -9,7 +9,12 @@ import pandas as pd
 from ablation_study_jepa.builders.features import build_features
 from ablation_study_jepa.config.schemas import ExperimentConfig
 from ablation_study_jepa.data.cleaning import clean_price_panel
-from ablation_study_jepa.data.preprocessing import PanelScaler, filter_anchor_rows, make_date_splits
+from ablation_study_jepa.data.preprocessing import (
+    PanelScaler,
+    filter_anchor_rows,
+    make_date_splits,
+    make_fraction_splits,
+)
 from ablation_study_jepa.utils.instantiate import locate
 
 
@@ -69,14 +74,29 @@ def build_data(config: ExperimentConfig) -> PreparedData:
     if missing_features:
         raise ValueError(f"Configured feature columns were not created/found: {missing_features}")
 
-    splits = make_date_splits(
-        train_end=config.splits.train_end,
-        val_end=config.splits.val_end,
-        test_end=config.splits.test_end,
-        train_start=config.splits.train_start,
-        val_start=config.splits.val_start,
-        test_start=config.splits.test_start,
-    )
+    if config.splits.method == "fraction":
+        splits = make_fraction_splits(
+            featured,
+            date_column=config.data.date_column,
+            train_fraction=config.splits.train,
+            validation_fraction=config.splits.validation,
+            test_fraction=config.splits.test,
+        )
+    else:
+        if (
+            config.splits.train_end is None
+            or config.splits.val_end is None
+            or config.splits.test_end is None
+        ):
+            raise ValueError("date splits require train_end, val_end, and test_end")
+        splits = make_date_splits(
+            train_end=config.splits.train_end,
+            val_end=config.splits.val_end,
+            test_end=config.splits.test_end,
+            train_start=config.splits.train_start,
+            val_start=config.splits.val_start,
+            test_start=config.splits.test_start,
+        )
     train_rows = filter_anchor_rows(
         featured,
         date_column=config.data.date_column,

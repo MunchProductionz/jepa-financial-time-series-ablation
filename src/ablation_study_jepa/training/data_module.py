@@ -30,6 +30,7 @@ class StockDataModule(BaseDataModule):
         test_dataset: Dataset,
         batch_size: int = 256,
         num_workers: int = 0,
+        persistent_workers: bool = False,
         pin_memory: bool = False,
         drop_last: bool = False,
     ) -> None:
@@ -40,6 +41,7 @@ class StockDataModule(BaseDataModule):
         self.test_dataset = test_dataset
         self.batch_size = batch_size
         self.num_workers = num_workers
+        self.persistent_workers = persistent_workers and num_workers > 0
         self.pin_memory = pin_memory
         self.drop_last = drop_last
 
@@ -49,6 +51,7 @@ class StockDataModule(BaseDataModule):
             batch_size=self.batch_size,
             shuffle=True,
             num_workers=self.num_workers,
+            persistent_workers=self.persistent_workers,
             pin_memory=self.pin_memory,
             drop_last=self.drop_last,
         )
@@ -59,6 +62,7 @@ class StockDataModule(BaseDataModule):
             batch_size=self.batch_size,
             shuffle=False,
             num_workers=self.num_workers,
+            persistent_workers=self.persistent_workers,
             pin_memory=self.pin_memory,
             drop_last=False,
         )
@@ -69,6 +73,7 @@ class StockDataModule(BaseDataModule):
             batch_size=self.batch_size,
             shuffle=False,
             num_workers=self.num_workers,
+            persistent_workers=self.persistent_workers,
             pin_memory=self.pin_memory,
             drop_last=False,
         )
