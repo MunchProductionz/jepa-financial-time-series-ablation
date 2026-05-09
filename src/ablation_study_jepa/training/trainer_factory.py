@@ -4,8 +4,16 @@ from __future__ import annotations
 
 from pathlib import Path
 from typing import Any
+import warnings
 
 from ablation_study_jepa.config.schemas import ExperimentConfig
+
+warnings.filterwarnings(
+    "ignore",
+    message=r"`isinstance\(treespec, LeafSpec\)` is deprecated.*",
+    category=UserWarning,
+    module=r"lightning\.pytorch\.utilities\._pytree",
+)
 
 try:  # pragma: no cover - exercised when Lightning is installed.
     import lightning.pytorch as pl

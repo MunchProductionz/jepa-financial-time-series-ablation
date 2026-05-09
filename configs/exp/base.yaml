@@ -127,7 +127,7 @@ splits:
 dataset:
   lookback: 60
   batch_size: 64
-  num_workers: 0
+  num_workers: 9
   drop_last: false
   pin_memory: false
   include_future_window: true

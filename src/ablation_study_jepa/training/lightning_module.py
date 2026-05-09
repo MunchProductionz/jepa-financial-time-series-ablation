@@ -3,11 +3,19 @@
 from __future__ import annotations
 
 from typing import Any
+import warnings
 
 import torch
 from torch import nn
 
 from ablation_study_jepa.models.jepa import LossAggregator, MultiLayerJEPAModule
+
+warnings.filterwarnings(
+    "ignore",
+    message=r"`isinstance\(treespec, LeafSpec\)` is deprecated.*",
+    category=UserWarning,
+    module=r"lightning\.pytorch\.utilities\._pytree",
+)
 
 try:  # pragma: no cover - exercised when Lightning is installed.
     import lightning.pytorch as pl
@@ -74,6 +82,7 @@ class ReturnPredictionLightningModule(BaseLightningModule):
                 "train/total_loss": losses["total_loss"],
                 **{f"train/{key}": value for key, value in jepa_logs.items()},
             },
+            batch_size=self._batch_size(batch),
             on_step=True,
             on_epoch=True,
         )
@@ -99,7 +108,12 @@ class ReturnPredictionLightningModule(BaseLightningModule):
     def _eval_step(self, batch: dict[str, Any], prefix: str) -> torch.Tensor:
         y_pred = self.model(batch, return_hidden_states=False)["y_pred"]
         loss = self.criterion(y_pred, batch["y"])
-        self._log_dict({f"{prefix}/prediction_loss": loss}, on_step=False, on_epoch=True)
+        self._log_dict(
+            {f"{prefix}/prediction_loss": loss},
+            batch_size=self._batch_size(batch),
+            on_step=False,
+            on_epoch=True,
+        )
         return loss
 
     def _compute_target_hidden_states(self, batch: dict[str, Any]) -> dict[int, list[torch.Tensor]]:
@@ -128,3 +142,7 @@ class ReturnPredictionLightningModule(BaseLightningModule):
     def _log_dict(self, values: dict[str, torch.Tensor], **kwargs: Any) -> None:
         if pl is not None:
             self.log_dict(values, prog_bar=False, logger=True, **kwargs)
+
+    @staticmethod
+    def _batch_size(batch: dict[str, Any]) -> int:
+        return int(batch["y"].shape[0])

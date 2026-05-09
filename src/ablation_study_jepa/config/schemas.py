@@ -393,7 +393,7 @@ class SplitsConfig(ExtraForbidModel):
 class DatasetConfig(ExtraForbidModel):
     lookback: int = 60
     batch_size: int = 256
-    num_workers: int = 0
+    num_workers: int = 9
     drop_last: bool = False
     pin_memory: bool = False
     include_future_window: bool = True

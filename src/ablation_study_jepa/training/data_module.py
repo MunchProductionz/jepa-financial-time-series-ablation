@@ -2,7 +2,16 @@
 
 from __future__ import annotations
 
+import warnings
+
 from torch.utils.data import DataLoader, Dataset
+
+warnings.filterwarnings(
+    "ignore",
+    message=r"`isinstance\(treespec, LeafSpec\)` is deprecated.*",
+    category=UserWarning,
+    module=r"lightning\.pytorch\.utilities\._pytree",
+)
 
 try:  # pragma: no cover - exercised when Lightning is installed.
     import lightning.pytorch as pl
@@ -63,4 +72,3 @@ class StockDataModule(BaseDataModule):
             pin_memory=self.pin_memory,
             drop_last=False,
         )
-
