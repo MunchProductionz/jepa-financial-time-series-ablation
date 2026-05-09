@@ -20,10 +20,10 @@ def build_data_module(
         test_dataset=test_dataset,
         batch_size=config.dataset.batch_size,
         num_workers=config.dataset.num_workers,
+        persistent_workers=config.dataset.persistent_workers,
         pin_memory=config.dataset.pin_memory,
         drop_last=config.dataset.drop_last,
     )
 
 
 __all__ = ["build_data_module", "build_trainer"]
-

@@ -34,6 +34,40 @@ def make_date_splits(
     }
 
 
+def make_fraction_splits(
+    frame: pd.DataFrame,
+    date_column: str,
+    train_fraction: float,
+    validation_fraction: float,
+    test_fraction: float,
+) -> dict[str, DateSplit]:
+    """Create chronological splits from fractions over available panel dates."""
+
+    fractions = [train_fraction, validation_fraction, test_fraction]
+    if any(value <= 0.0 or value >= 1.0 for value in fractions):
+        raise ValueError("split fractions must each be between 0 and 1")
+    if abs(sum(fractions) - 1.0) > 1e-6:
+        raise ValueError("split fractions must sum to 1.0")
+
+    dates = pd.Series(pd.to_datetime(frame[date_column]).dropna().unique()).sort_values().reset_index(drop=True)
+    if len(dates) < 3:
+        raise ValueError("At least three unique dates are required for fraction splits")
+
+    train_count = int(np.floor(len(dates) * train_fraction))
+    val_count = int(np.floor(len(dates) * validation_fraction))
+    train_count = min(max(train_count, 1), len(dates) - 2)
+    val_count = min(max(val_count, 1), len(dates) - train_count - 1)
+
+    train_end = pd.Timestamp(dates.iloc[train_count - 1])
+    val_end = pd.Timestamp(dates.iloc[train_count + val_count - 1])
+    test_end = pd.Timestamp(dates.iloc[-1])
+    return {
+        "train": DateSplit("train", None, train_end, train_end),
+        "val": DateSplit("val", train_end, val_end, val_end),
+        "test": DateSplit("test", val_end, test_end, test_end),
+    }
+
+
 def filter_anchor_rows(
     frame: pd.DataFrame,
     date_column: str,

@@ -220,8 +220,7 @@ __marimo__/
 # Project experiment artifacts
 wandb/
 lightning_logs/
-predictions/*.csv
-predictions/*.json
+predictions/
 data/prices/*.csv
 data/macro/fred_md/*.csv
 *.ckpt

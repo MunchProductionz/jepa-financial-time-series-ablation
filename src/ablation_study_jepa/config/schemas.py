@@ -381,19 +381,41 @@ class FeatureConfig(ExtraForbidModel):
 
 
 class SplitsConfig(ExtraForbidModel):
-    method: Literal["date"] = "date"
-    train_end: str
-    val_end: str
-    test_end: str
+    method: Literal["date", "fraction"] = "date"
+    train_end: str | None = None
+    val_end: str | None = None
+    test_end: str | None = None
     train_start: str | None = None
     val_start: str | None = None
     test_start: str | None = None
+    train: float = 0.7
+    validation: float = 0.2
+    test: float = 0.1
+
+    @model_validator(mode="after")
+    def _validate_split_mode(self) -> "SplitsConfig":
+        if self.method == "date":
+            missing = [
+                name
+                for name in ("train_end", "val_end", "test_end")
+                if getattr(self, name) is None
+            ]
+            if missing:
+                raise ValueError(f"date splits require: {missing}")
+        else:
+            fractions = [self.train, self.validation, self.test]
+            if any(value <= 0.0 or value >= 1.0 for value in fractions):
+                raise ValueError("fraction splits must each be between 0 and 1")
+            if abs(sum(fractions) - 1.0) > 1e-6:
+                raise ValueError("fraction splits must sum to 1.0")
+        return self
 
 
 class DatasetConfig(ExtraForbidModel):
     lookback: int = 60
     batch_size: int = 256
-    num_workers: int = 0
+    num_workers: int = 9
+    persistent_workers: bool = True
     drop_last: bool = False
     pin_memory: bool = False
     include_future_window: bool = True

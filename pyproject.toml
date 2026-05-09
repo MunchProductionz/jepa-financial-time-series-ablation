@@ -17,14 +17,14 @@ dependencies = [
   "PyYAML>=6.0",
   "curl-cffi>=0.13",
   "torch>=2.1",
-  "lightning>=2.2",
+  "lightning>=2.6.1",
   "scipy>=1.10",
   "wandb>=0.16",
   "yfinance>=0.2.66",
 ]
 
 [dependency-groups]
-dev = ["pytest>=8.0", "ruff>=0.5"]
+dev = ["ipywidgets>=8.1", "pytest>=8.0", "ruff>=0.5"]
 
 [project.scripts]
 ablation-study-jepa = "ablation_study_jepa.cli:main"
