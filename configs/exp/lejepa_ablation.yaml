@@ -32,7 +32,7 @@ jepa:
     detach_target: true
     loss_mix:
       mode: lambda_sigreg # values: lambda_sigreg
-      lambda_sigreg: 0.5
+      lambda_sigreg: 0.05
     sigreg:
       enabled: true
       apply_to: context_and_targets # values: context_only, targets_only, context_and_targets (default)
