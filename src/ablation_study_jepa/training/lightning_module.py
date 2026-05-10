@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from contextlib import nullcontext
 from typing import Any
 import warnings
 
@@ -126,7 +127,9 @@ class ReturnPredictionLightningModule(BaseLightningModule):
         future_horizons = batch["future_horizons"]
         target_hidden_by_horizon: dict[int, list[torch.Tensor]] = {}
         horizon_count = future_x.size(1)
-        with torch.no_grad():
+        requires_grad = self._jepa_target_hidden_requires_grad()
+        grad_context = nullcontext() if requires_grad else torch.no_grad()
+        with grad_context:
             for horizon_index in range(horizon_count):
                 horizon = int(future_horizons[0, horizon_index].item())
                 future_batch = {"x": future_x[:, horizon_index, :, :]}
@@ -136,8 +139,17 @@ class ReturnPredictionLightningModule(BaseLightningModule):
                 hidden_states = future_outputs["hidden_states"]
                 if hidden_states is None:
                     raise RuntimeError("Base model did not return target hidden states")
-                target_hidden_by_horizon[horizon] = [state.detach() for state in hidden_states]
+                if requires_grad:
+                    target_hidden_by_horizon[horizon] = hidden_states
+                else:
+                    target_hidden_by_horizon[horizon] = [state.detach() for state in hidden_states]
         return target_hidden_by_horizon
+
+    def _jepa_target_hidden_requires_grad(self) -> bool:
+        if self.jepa_module is None:
+            return False
+        config = self.jepa_module.config
+        return config.mode == "lejepa" and not config.lejepa.detach_target
 
     def _log_dict(self, values: dict[str, torch.Tensor], **kwargs: Any) -> None:
         if pl is not None:

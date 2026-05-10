@@ -16,8 +16,8 @@ class TFTWithJEPA(TFT):
 
     The supervised forward path is identical to ``TFT``. When hidden states are
     requested during training, ``compute_jepa_loss`` applies the attached JEPA
-    heads to selected Transformer block outputs and detached future-window
-    target representations.
+    heads to selected Transformer block outputs and future-window target
+    representations. Target detachment is controlled by the active JEPA mode.
     """
 
     def __init__(
@@ -76,4 +76,3 @@ class TFTWithJEPA(TFT):
             target_hidden_states_by_horizon=target_hidden_states_by_horizon,
             metadata=metadata,
         )
-

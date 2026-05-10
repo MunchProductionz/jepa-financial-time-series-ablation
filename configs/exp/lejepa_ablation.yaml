@@ -1,0 +1,47 @@
+defaults:
+  - base
+  - _self_
+
+run_name: tft_lejepa_last2_h1_h5_lambda005
+
+model:
+  target: ablation_study_jepa.models.tft_with_jepa:TFTWithJEPA
+  hidden_dim: 128
+  num_transformer_blocks: 4
+  num_attention_heads: 4
+  dropout: 0.1
+  use_causal_mask: true
+
+jepa:
+  enabled: true
+  mode: lejepa # values: contrastive, lejepa
+  num_jepa_layers: 2
+  selected_layers: null
+  layer_selection_mode: last_L # values: last_L, last_k, manual, all, none
+  projection_dim: 128
+  predictor_type: mlp # values: linear, mlp, residual_mlp
+  horizons: [1, 5]
+  global_weight: 0.05
+  layer_weight_scheme: exponential # values: uniform, linear, exponential, manual
+  layer_weight_gamma: 2.0
+  manual_layer_weights: null
+  horizon_weight_scheme: uniform # values: uniform, linear, exponential, manual
+  manual_horizon_weights: null
+  lejepa:
+    prediction_loss: mse # values: mse
+    detach_target: true
+    loss_mix:
+      mode: lambda_sigreg # values: lambda_sigreg
+      lambda_sigreg: 0.5
+    sigreg:
+      enabled: true
+      apply_to: context_and_targets # values: context_only, targets_only, context_and_targets (default)
+      num_slices: 256
+      num_t: 17
+      t_max: 5.0
+      resample_directions_each_step: true
+      min_batch_size: 8
+
+logging:
+  wandb:
+    tags: ["lejepa", "last_L", "horizon_1_5", "lambda_0.05"]

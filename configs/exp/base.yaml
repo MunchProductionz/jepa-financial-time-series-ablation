@@ -157,28 +157,44 @@ model:
 
 jepa:
   enabled: false
+  mode: contrastive # values: contrastive, lejepa
   num_jepa_layers: 0
   selected_layers: null
-  layer_selection_mode: none # values: last_L, manual, all, none
+  layer_selection_mode: none # values: last_L, last_k, manual, all, none
   projection_dim: 128
   predictor_type: mlp # values: linear, mlp, residual_mlp
   horizons: [1]
-  temperature: 0.1
   global_weight: 0.05
   layer_weight_scheme: linear # values: uniform, linear, exponential, manual
   layer_weight_gamma: 2.0
   manual_layer_weights: null
   horizon_weight_scheme: uniform # values: uniform, linear, exponential, manual
   manual_horizon_weights: null
-  negative_strategy: mixed # values: in_batch_all, in_batch_filtered, same_asset_far_time, different_asset_different_time, mixed
-  num_negatives: null
-  exclusion_window: 5
-  allow_same_date_cross_asset_negatives: false
-  allow_same_sector_negatives: true
-  sector_filtering: false
-  same_asset_negative_min_gap: 20
-  memory_bank_enabled: false
-  memory_bank_size: 4096
+  contrastive:
+    temperature: 0.1
+    negative_strategy: mixed # values: in_batch_all, in_batch_filtered, same_asset_far_time, different_asset_different_time, mixed
+    num_negatives: null
+    exclusion_window: 5
+    allow_same_date_cross_asset_negatives: false
+    allow_same_sector_negatives: true
+    sector_filtering: false
+    same_asset_negative_min_gap: 20
+    memory_bank_enabled: false
+    memory_bank_size: 4096
+  lejepa:
+    prediction_loss: mse # values: mse
+    detach_target: false
+    loss_mix:
+      mode: lambda_sigreg # values: lambda_sigreg
+      lambda_sigreg: 0.5
+    sigreg:
+      enabled: true
+      apply_to: context_and_targets # values: context_only, targets_only, context_and_targets
+      num_slices: 256
+      num_t: 17
+      t_max: 5.0
+      resample_directions_each_step: true
+      min_batch_size: 8
 
 training:
   batch_size: 64
