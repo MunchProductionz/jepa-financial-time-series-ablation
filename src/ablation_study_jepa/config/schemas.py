@@ -51,6 +51,7 @@ class ModelConfig(ExtraForbidModel):
 
 class LayerSelectionMode(str, Enum):
     LAST_L = "last_L"
+    LAST_K = "last_k"
     MANUAL = "manual"
     ALL = "all"
     NONE = "none"
@@ -77,21 +78,27 @@ class NegativeStrategy(str, Enum):
     MIXED = "mixed"
 
 
-class JEPAConfig(ExtraForbidModel):
-    enabled: bool = True
-    num_jepa_layers: int = 1
-    selected_layers: list[int] | None = None
-    layer_selection_mode: LayerSelectionMode = LayerSelectionMode.LAST_L
-    projection_dim: int = 128
-    predictor_type: PredictorType = PredictorType.MLP
-    horizons: list[int] = Field(default_factory=lambda: [1])
+class JEPAMode(str, Enum):
+    CONTRASTIVE = "contrastive"
+    LEJEPA = "lejepa"
+
+
+class LeJEPAPredictionLoss(str, Enum):
+    MSE = "mse"
+
+
+class LeJEPALossMixMode(str, Enum):
+    LAMBDA_SIGREG = "lambda_sigreg"
+
+
+class SIGRegApplyTo(str, Enum):
+    CONTEXT_ONLY = "context_only"
+    TARGETS_ONLY = "targets_only"
+    CONTEXT_AND_TARGETS = "context_and_targets"
+
+
+class ContrastiveJEPAConfig(ExtraForbidModel):
     temperature: float = 0.1
-    global_weight: float = 0.05
-    layer_weight_scheme: WeightScheme = WeightScheme.LINEAR
-    layer_weight_gamma: float = 2.0
-    manual_layer_weights: list[float] | None = None
-    horizon_weight_scheme: WeightScheme = WeightScheme.UNIFORM
-    manual_horizon_weights: list[float] | None = None
     negative_strategy: NegativeStrategy = NegativeStrategy.MIXED
     num_negatives: int | None = None
     exclusion_window: int = 5
@@ -101,6 +108,133 @@ class JEPAConfig(ExtraForbidModel):
     same_asset_negative_min_gap: int = 20
     memory_bank_enabled: bool = False
     memory_bank_size: int = 4096
+
+    @field_validator("temperature")
+    @classmethod
+    def _positive_temperature(cls, value: float) -> float:
+        if value <= 0:
+            raise ValueError("temperature must be positive")
+        return value
+
+    @field_validator("exclusion_window", "same_asset_negative_min_gap", "memory_bank_size")
+    @classmethod
+    def _nonnegative_int(cls, value: int) -> int:
+        if value < 0:
+            raise ValueError("contrastive integer settings must be non-negative")
+        return value
+
+    @field_validator("num_negatives")
+    @classmethod
+    def _positive_num_negatives(cls, value: int | None) -> int | None:
+        if value is not None and value <= 0:
+            raise ValueError("num_negatives must be positive when set")
+        return value
+
+    @model_validator(mode="after")
+    def _validate_memory_bank(self) -> "ContrastiveJEPAConfig":
+        if self.memory_bank_enabled:
+            raise ValueError(
+                "memory_bank_enabled is reserved for a future training-only memory bank implementation"
+            )
+        return self
+
+
+class LeJEPALossMixConfig(ExtraForbidModel):
+    mode: LeJEPALossMixMode = LeJEPALossMixMode.LAMBDA_SIGREG
+    lambda_sigreg: float = 0.5
+
+    @field_validator("lambda_sigreg")
+    @classmethod
+    def _valid_lambda_sigreg(cls, value: float) -> float:
+        if value < 0.0 or value > 1.0:
+            raise ValueError("lambda_sigreg must be between 0 and 1")
+        return value
+
+
+class SIGRegConfig(ExtraForbidModel):
+    enabled: bool = True
+    apply_to: SIGRegApplyTo = SIGRegApplyTo.CONTEXT_AND_TARGETS
+    num_slices: int = 256
+    num_t: int = 17
+    t_max: float = 5.0
+    resample_directions_each_step: bool = True
+    min_batch_size: int = 8
+
+    @field_validator("num_slices", "num_t", "min_batch_size")
+    @classmethod
+    def _positive_ints(cls, value: int) -> int:
+        if value <= 0:
+            raise ValueError("SIGReg integer settings must be positive")
+        return value
+
+    @field_validator("t_max")
+    @classmethod
+    def _positive_t_max(cls, value: float) -> float:
+        if value <= 0:
+            raise ValueError("SIGReg t_max must be positive")
+        return value
+
+
+class LeJEPAConfig(ExtraForbidModel):
+    prediction_loss: LeJEPAPredictionLoss = LeJEPAPredictionLoss.MSE
+    detach_target: bool = False
+    loss_mix: LeJEPALossMixConfig = Field(default_factory=LeJEPALossMixConfig)
+    sigreg: SIGRegConfig = Field(default_factory=SIGRegConfig)
+
+
+class JEPAConfig(ExtraForbidModel):
+    enabled: bool = True
+    mode: JEPAMode = JEPAMode.CONTRASTIVE
+    num_jepa_layers: int = 1
+    selected_layers: list[int] | None = None
+    layer_selection_mode: LayerSelectionMode = LayerSelectionMode.LAST_L
+    projection_dim: int = 128
+    predictor_type: PredictorType = PredictorType.MLP
+    horizons: list[int] = Field(default_factory=lambda: [1])
+    global_weight: float = 0.05
+    lambda_jepa: float | None = None
+    contrastive: ContrastiveJEPAConfig = Field(default_factory=ContrastiveJEPAConfig)
+    lejepa: LeJEPAConfig = Field(default_factory=LeJEPAConfig)
+
+    layer_weight_scheme: WeightScheme = WeightScheme.LINEAR
+    layer_weight_gamma: float = 2.0
+    manual_layer_weights: list[float] | None = None
+    horizon_weight_scheme: WeightScheme = WeightScheme.UNIFORM
+    manual_horizon_weights: list[float] | None = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def _migrate_legacy_contrastive_keys(cls, data: Any) -> Any:
+        if not isinstance(data, dict):
+            return data
+        legacy_keys = {
+            "temperature",
+            "negative_strategy",
+            "num_negatives",
+            "exclusion_window",
+            "allow_same_date_cross_asset_negatives",
+            "allow_same_sector_negatives",
+            "sector_filtering",
+            "same_asset_negative_min_gap",
+            "memory_bank_enabled",
+            "memory_bank_size",
+        }
+        present = legacy_keys.intersection(data)
+        if not present:
+            return data
+
+        migrated = dict(data)
+        contrastive = dict(migrated.get("contrastive") or {})
+        for key in sorted(present):
+            value = migrated.pop(key)
+            if key in contrastive and contrastive[key] != value:
+                raise ValueError(
+                    f"jepa.{key} conflicts with jepa.contrastive.{key}; "
+                    "use the nested contrastive config"
+                )
+            contrastive[key] = value
+        migrated["contrastive"] = contrastive
+        return migrated
 
     @field_validator("num_jepa_layers")
     @classmethod
@@ -125,15 +259,21 @@ class JEPAConfig(ExtraForbidModel):
             raise ValueError("JEPA horizons must be positive trading-day offsets")
         return sorted(dict.fromkeys(value))
 
-    @field_validator("temperature")
+    @field_validator("global_weight")
     @classmethod
-    def _positive_temperature(cls, value: float) -> float:
-        if value <= 0:
-            raise ValueError("temperature must be positive")
+    def _nonnegative_global_weight(cls, value: float) -> float:
+        if value < 0.0:
+            raise ValueError("global_weight must be non-negative")
         return value
 
     @model_validator(mode="after")
     def _validate_manual_weights(self) -> "JEPAConfig":
+        if self.lambda_jepa is not None:
+            if "global_weight" in self.model_fields_set and self.global_weight != self.lambda_jepa:
+                raise ValueError("jepa.global_weight and jepa.lambda_jepa must match when both are set")
+            if self.lambda_jepa < 0.0:
+                raise ValueError("lambda_jepa must be non-negative")
+            self.global_weight = self.lambda_jepa
         if self.layer_weight_scheme == WeightScheme.MANUAL:
             if self.manual_layer_weights is None:
                 raise ValueError("manual_layer_weights is required for manual layer weighting")
@@ -144,10 +284,6 @@ class JEPAConfig(ExtraForbidModel):
                 raise ValueError("manual_horizon_weights is required for manual horizon weighting")
             if len(self.manual_horizon_weights) != len(self.horizons):
                 raise ValueError("manual_horizon_weights must match horizons length")
-        if self.memory_bank_enabled:
-            raise ValueError(
-                "memory_bank_enabled is reserved for a future training-only memory bank implementation"
-            )
         return self
 
     def resolve_selected_layers(self, num_transformer_blocks: int) -> list[int]:

@@ -14,7 +14,7 @@ model:
 jepa:
   enabled: false
   num_jepa_layers: 0
-  layer_selection_mode: none # values: last_L, manual, all, none
+  layer_selection_mode: none # values: last_L, last_k, manual, all, none
 
 logging:
   wandb:
