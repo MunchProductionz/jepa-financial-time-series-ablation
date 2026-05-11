@@ -53,10 +53,12 @@ def make_fraction_splits(
     if len(dates) < 3:
         raise ValueError("At least three unique dates are required for fraction splits")
 
-    train_count = int(np.floor(len(dates) * train_fraction))
-    val_count = int(np.floor(len(dates) * validation_fraction))
-    train_count = min(max(train_count, 1), len(dates) - 2)
-    val_count = min(max(val_count, 1), len(dates) - train_count - 1)
+    train_count, val_count, _ = fraction_split_counts(
+        len(dates),
+        train_fraction=train_fraction,
+        validation_fraction=validation_fraction,
+        test_fraction=test_fraction,
+    )
 
     train_end = pd.Timestamp(dates.iloc[train_count - 1])
     val_end = pd.Timestamp(dates.iloc[train_count + val_count - 1])
@@ -66,6 +68,30 @@ def make_fraction_splits(
         "val": DateSplit("val", train_end, val_end, val_end),
         "test": DateSplit("test", val_end, test_end, test_end),
     }
+
+
+def fraction_split_counts(
+    date_count: int,
+    train_fraction: float,
+    validation_fraction: float,
+    test_fraction: float,
+) -> tuple[int, int, int]:
+    """Return chronological train/validation/test date counts for fraction splits."""
+
+    fractions = [train_fraction, validation_fraction, test_fraction]
+    if any(value <= 0.0 or value >= 1.0 for value in fractions):
+        raise ValueError("split fractions must each be between 0 and 1")
+    if abs(sum(fractions) - 1.0) > 1e-6:
+        raise ValueError("split fractions must sum to 1.0")
+    if date_count < 3:
+        raise ValueError("At least three unique dates are required for fraction splits")
+
+    train_count = int(np.floor(date_count * train_fraction))
+    val_count = int(np.floor(date_count * validation_fraction))
+    train_count = min(max(train_count, 1), date_count - 2)
+    val_count = min(max(val_count, 1), date_count - train_count - 1)
+    test_count = date_count - train_count - val_count
+    return train_count, val_count, test_count
 
 
 def filter_anchor_rows(

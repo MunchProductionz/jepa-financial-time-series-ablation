@@ -10,6 +10,7 @@ from ablation_study_jepa.builders.features import build_features
 from ablation_study_jepa.config.schemas import ExperimentConfig
 from ablation_study_jepa.data.cleaning import clean_price_panel
 from ablation_study_jepa.data.preprocessing import (
+    DateSplit,
     PanelScaler,
     filter_anchor_rows,
     make_date_splits,
@@ -19,15 +20,34 @@ from ablation_study_jepa.utils.instantiate import locate
 
 
 @dataclass
+class PreparedPanel:
+    raw_panel: pd.DataFrame
+    feature_panel: pd.DataFrame
+
+
+@dataclass
 class PreparedData:
     raw_panel: pd.DataFrame
     feature_panel: pd.DataFrame
     scaled_panel: pd.DataFrame
     scaler: PanelScaler
-    splits: dict
+    splits: dict[str, DateSplit]
 
 
 def build_data(config: ExperimentConfig) -> PreparedData:
+    prepared = build_feature_panel(config)
+    splits = build_splits(config, prepared.feature_panel)
+    scaled, scaler = scale_panel_for_splits(config, prepared.feature_panel, splits)
+    return PreparedData(
+        raw_panel=prepared.raw_panel,
+        feature_panel=prepared.feature_panel,
+        scaled_panel=scaled,
+        scaler=scaler,
+        splits=splits,
+    )
+
+
+def build_feature_panel(config: ExperimentConfig) -> PreparedPanel:
     loader = locate(config.data.loader)
     raw = loader(
         data_dir=config.data.data_dir,
@@ -74,31 +94,42 @@ def build_data(config: ExperimentConfig) -> PreparedData:
     if missing_features:
         raise ValueError(f"Configured feature columns were not created/found: {missing_features}")
 
+    return PreparedPanel(raw_panel=cleaned, feature_panel=featured)
+
+
+def build_splits(config: ExperimentConfig, frame: pd.DataFrame) -> dict[str, DateSplit]:
     if config.splits.method == "fraction":
-        splits = make_fraction_splits(
-            featured,
+        return make_fraction_splits(
+            frame,
             date_column=config.data.date_column,
             train_fraction=config.splits.train,
             validation_fraction=config.splits.validation,
             test_fraction=config.splits.test,
         )
-    else:
-        if (
-            config.splits.train_end is None
-            or config.splits.val_end is None
-            or config.splits.test_end is None
-        ):
-            raise ValueError("date splits require train_end, val_end, and test_end")
-        splits = make_date_splits(
-            train_end=config.splits.train_end,
-            val_end=config.splits.val_end,
-            test_end=config.splits.test_end,
-            train_start=config.splits.train_start,
-            val_start=config.splits.val_start,
-            test_start=config.splits.test_start,
-        )
+
+    if (
+        config.splits.train_end is None
+        or config.splits.val_end is None
+        or config.splits.test_end is None
+    ):
+        raise ValueError("date splits require train_end, val_end, and test_end")
+    return make_date_splits(
+        train_end=config.splits.train_end,
+        val_end=config.splits.val_end,
+        test_end=config.splits.test_end,
+        train_start=config.splits.train_start,
+        val_start=config.splits.val_start,
+        test_start=config.splits.test_start,
+    )
+
+
+def scale_panel_for_splits(
+    config: ExperimentConfig,
+    frame: pd.DataFrame,
+    splits: dict[str, DateSplit],
+) -> tuple[pd.DataFrame, PanelScaler]:
     train_rows = filter_anchor_rows(
-        featured,
+        frame,
         date_column=config.data.date_column,
         split=splits["train"],
         include_start=True,
@@ -106,16 +137,10 @@ def build_data(config: ExperimentConfig) -> PreparedData:
     scaler = PanelScaler(config.data.scaler_type)
     if config.data.fit_scaler_on_train_only:
         scaler.fit(train_rows, config.data.feature_columns)
-        scaled = scaler.transform(featured, config.data.feature_columns)
+        scaled = scaler.transform(frame, config.data.feature_columns)
     else:
-        scaled = scaler.fit_transform(featured, config.data.feature_columns)
-    return PreparedData(
-        raw_panel=cleaned,
-        feature_panel=featured,
-        scaled_panel=scaled,
-        scaler=scaler,
-        splits=splits,
-    )
+        scaled = scaler.fit_transform(frame, config.data.feature_columns)
+    return scaled, scaler
 
 
 def add_sector_one_hot_features(

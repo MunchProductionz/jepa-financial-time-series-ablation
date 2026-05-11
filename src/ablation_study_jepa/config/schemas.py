@@ -34,7 +34,9 @@ class ModelConfig(ExtraForbidModel):
     params: dict[str, Any] = Field(default_factory=dict)
     optimizer: OptimizerConfig = Field(default_factory=OptimizerConfig)
 
-    @field_validator("hidden_dim", "num_transformer_blocks", "num_attention_heads", "sequence_length")
+    @field_validator(
+        "hidden_dim", "num_transformer_blocks", "num_attention_heads", "sequence_length"
+    )
     @classmethod
     def _positive_int(cls, value: int) -> int:
         if value <= 0:
@@ -270,7 +272,9 @@ class JEPAConfig(ExtraForbidModel):
     def _validate_manual_weights(self) -> "JEPAConfig":
         if self.lambda_jepa is not None:
             if "global_weight" in self.model_fields_set and self.global_weight != self.lambda_jepa:
-                raise ValueError("jepa.global_weight and jepa.lambda_jepa must match when both are set")
+                raise ValueError(
+                    "jepa.global_weight and jepa.lambda_jepa must match when both are set"
+                )
             if self.lambda_jepa < 0.0:
                 raise ValueError("lambda_jepa must be non-negative")
             self.global_weight = self.lambda_jepa
@@ -532,9 +536,7 @@ class SplitsConfig(ExtraForbidModel):
     def _validate_split_mode(self) -> "SplitsConfig":
         if self.method == "date":
             missing = [
-                name
-                for name in ("train_end", "val_end", "test_end")
-                if getattr(self, name) is None
+                name for name in ("train_end", "val_end", "test_end") if getattr(self, name) is None
             ]
             if missing:
                 raise ValueError(f"date splits require: {missing}")
@@ -544,6 +546,31 @@ class SplitsConfig(ExtraForbidModel):
                 raise ValueError("fraction splits must each be between 0 and 1")
             if abs(sum(fractions) - 1.0) > 1e-6:
                 raise ValueError("fraction splits must sum to 1.0")
+        return self
+
+
+class SlidingWindowConfig(ExtraForbidModel):
+    enabled: bool = False
+    window_size_days: int | None = None
+    step_days: int | None = None
+    require_test_overlap: bool = True
+
+    @model_validator(mode="after")
+    def _validate_window_settings(self) -> "SlidingWindowConfig":
+        if not self.enabled:
+            return self
+        if self.window_size_days is None:
+            raise ValueError(
+                "sliding_window.window_size_days is required when sliding windows are enabled"
+            )
+        if self.step_days is None:
+            raise ValueError(
+                "sliding_window.step_days is required when sliding windows are enabled"
+            )
+        if self.window_size_days <= 0:
+            raise ValueError("sliding_window.window_size_days must be positive")
+        if self.step_days <= 0:
+            raise ValueError("sliding_window.step_days must be positive")
         return self
 
 
@@ -613,6 +640,7 @@ class ExperimentConfig(ExtraForbidModel):
     data: DataConfig = Field(default_factory=DataConfig)
     features: FeatureConfig = Field(default_factory=FeatureConfig)
     splits: SplitsConfig
+    sliding_window: SlidingWindowConfig = Field(default_factory=SlidingWindowConfig)
     dataset: DatasetConfig = Field(default_factory=DatasetConfig)
     model: ModelConfig = Field(default_factory=ModelConfig)
     jepa: JEPAConfig = Field(default_factory=JEPAConfig)
@@ -622,6 +650,8 @@ class ExperimentConfig(ExtraForbidModel):
 
     @model_validator(mode="after")
     def _synchronize_horizons_and_columns(self) -> "ExperimentConfig":
+        if self.sliding_window.enabled and self.splits.method != "fraction":
+            raise ValueError("sliding windows require splits.method='fraction'")
         self.model.sequence_length = self.dataset.lookback
         self.model.prediction_horizon = self.features.target.horizon
         self.data.target_column = self.features.target.column
