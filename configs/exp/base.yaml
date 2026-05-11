@@ -128,6 +128,15 @@ splits:
   # val_end: "2022-12-31"
   # test_end: "2025-12-31"
 
+sliding_window:
+  enabled: true
+  # When enabled, windows are counted over available trading dates and aligned so
+  # the final complete window ends at the last loaded date.
+  window_size_days: 2520 # ~10 years of trading days
+  step_days: 252 # ~1 year of trading days
+  # Checks that adjacent test sets cover dates without gaps; exact adjacency is valid.
+  require_test_overlap: true
+
 dataset:
   lookback: 60
   batch_size: 64

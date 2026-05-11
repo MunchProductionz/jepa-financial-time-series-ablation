@@ -1,7 +1,13 @@
 import pytest
 
 from ablation_study_jepa.config.loader import load_config
-from ablation_study_jepa.config.schemas import JEPAConfig, SplitsConfig, normalize_weights
+from ablation_study_jepa.config.schemas import (
+    ExperimentConfig,
+    JEPAConfig,
+    SlidingWindowConfig,
+    SplitsConfig,
+    normalize_weights,
+)
 
 
 def test_last_l_layer_selection_and_linear_weights() -> None:
@@ -48,7 +54,7 @@ def test_lejepa_config_parses_separate_loss_settings() -> None:
     assert config.jepa.resolve_selected_layers(config.model.num_transformer_blocks) == [2, 3]
     assert config.jepa.normalized_layer_weights([2, 3]) == [1 / 3, 2 / 3]
     assert config.jepa.lejepa.detach_target is False
-    assert config.jepa.lejepa.loss_mix.lambda_sigreg == pytest.approx(0.5)
+    assert config.jepa.lejepa.loss_mix.lambda_sigreg == pytest.approx(0.05)
     assert config.jepa.lejepa.sigreg.apply_to == "context_and_targets"
 
 
@@ -78,3 +84,20 @@ def test_fraction_split_config_requires_fractions_sum_to_one() -> None:
     config = SplitsConfig(method="fraction", train=0.7, validation=0.2, test=0.1)
 
     assert config.method == "fraction"
+
+
+def test_sliding_window_requires_fraction_splits() -> None:
+    with pytest.raises(ValueError, match="splits.method='fraction'"):
+        ExperimentConfig(
+            splits=SplitsConfig(
+                method="date",
+                train_end="2020-12-31",
+                val_end="2021-12-31",
+                test_end="2022-12-31",
+            ),
+            sliding_window=SlidingWindowConfig(
+                enabled=True,
+                window_size_days=252,
+                step_days=20,
+            ),
+        )

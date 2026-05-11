@@ -1,0 +1,23 @@
+program: ablation-study-jepa
+method: grid
+metric:
+  name: val/mse
+  goal: minimize
+parameters:
+  config:
+    value: configs/exp/lejepa_ablation.yaml
+  jepa.mode:
+    value: lejepa
+  jepa.num_jepa_layers:
+    values: [0, 1, 2, 3, 4]
+  jepa.global_weight:
+    values: [0.001, 0.01, 0.05, 0.1]
+  jepa.projection_dim:
+    values: [64, 128, 256]
+  jepa.horizons:
+    values:
+      - [1]
+      - [60]
+      - [1, 5, 20, 60]
+  jepa.lejepa.detach_target:
+    values: [false, true]

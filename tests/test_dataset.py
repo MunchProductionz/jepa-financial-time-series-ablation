@@ -3,6 +3,8 @@ import pytest
 
 from ablation_study_jepa.data.preprocessing import PanelScaler
 from ablation_study_jepa.data.preprocessing import make_fraction_splits
+from ablation_study_jepa.builders.windows import build_experiment_windows
+from ablation_study_jepa.config.schemas import ExperimentConfig, SlidingWindowConfig, SplitsConfig
 from ablation_study_jepa.data.synthetic import build_sample_panel
 from ablation_study_jepa.datasets.windowed import WindowedStockDataset
 from ablation_study_jepa.features.returns import add_return_features
@@ -66,3 +68,58 @@ def test_fraction_splits_use_chronological_available_dates() -> None:
     assert splits["val"].end == pd.Timestamp(frame["date"].iloc[8])
     assert splits["test"].start == splits["val"].end
     assert splits["test"].end == pd.Timestamp(frame["date"].iloc[9])
+
+
+def test_sliding_windows_align_last_window_and_drop_incomplete_first_window() -> None:
+    frame = pd.DataFrame({"date": pd.bdate_range("2024-01-01", periods=25)})
+    config = ExperimentConfig(
+        splits=SplitsConfig(method="fraction", train=0.6, validation=0.2, test=0.2),
+        sliding_window=SlidingWindowConfig(
+            enabled=True,
+            window_size_days=10,
+            step_days=1,
+        ),
+    )
+
+    plan = build_experiment_windows(config, frame)
+
+    assert plan.windows[-1].end == pd.Timestamp(frame["date"].iloc[-1])
+    assert plan.dropped_incomplete_windows > 0
+    assert all(window.date_count == 10 for window in plan.windows)
+    assert plan.windows[0].start == pd.Timestamp(frame["date"].iloc[0])
+    assert plan.windows[0].train_date_count == 6
+    assert plan.windows[0].val_date_count == 2
+    assert plan.windows[0].test_date_count == 2
+
+
+def test_sliding_window_allows_adjacent_test_sets_without_overlap() -> None:
+    frame = pd.DataFrame({"date": pd.bdate_range("2024-01-01", periods=25)})
+    config = ExperimentConfig(
+        splits=SplitsConfig(method="fraction", train=0.6, validation=0.2, test=0.2),
+        sliding_window=SlidingWindowConfig(
+            enabled=True,
+            window_size_days=10,
+            step_days=2,
+        ),
+    )
+
+    plan = build_experiment_windows(config, frame)
+
+    previous = plan.windows[0]
+    current = plan.windows[1]
+    assert current.splits["test"].start == previous.splits["test"].end
+
+
+def test_sliding_window_requires_gapless_test_coverage() -> None:
+    frame = pd.DataFrame({"date": pd.bdate_range("2024-01-01", periods=25)})
+    config = ExperimentConfig(
+        splits=SplitsConfig(method="fraction", train=0.6, validation=0.2, test=0.2),
+        sliding_window=SlidingWindowConfig(
+            enabled=True,
+            window_size_days=10,
+            step_days=3,
+        ),
+    )
+
+    with pytest.raises(ValueError, match="step_days <= 2"):
+        build_experiment_windows(config, frame)
