@@ -39,10 +39,10 @@ The project is intentionally configured around `uv`; use `.python-version` and
 
 ## What Is Being Tested
 
-The supervised task predicts future stock returns over trading-day horizons:
+The supervised task predicts future log-returns over trading-day horizons:
 
 ```text
-return_{i,t+k} = Close_{i,t+k} / Close_{i,t} - 1
+log_return_{i,t+k} = log(Close_{i,t+k} / Close_{i,t})
 ```
 
 The base model is a TFT-inspired forecaster with:
@@ -51,7 +51,7 @@ The base model is a TFT-inspired forecaster with:
 - optional static feature embeddings
 - LSTM temporal encoding
 - a configurable stack of causal Transformer blocks
-- a supervised return prediction head
+- a supervised log-return prediction head
 
 When JEPA is enabled, selected Transformer block outputs feed auxiliary heads that:
 

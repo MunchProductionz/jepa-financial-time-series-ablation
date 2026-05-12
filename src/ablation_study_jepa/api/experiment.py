@@ -25,6 +25,7 @@ from ablation_study_jepa.config.loader import load_config
 from ablation_study_jepa.config.schemas import ExperimentConfig
 from ablation_study_jepa.evaluation.metrics import compute_metrics
 from ablation_study_jepa.evaluation.predictions import (
+    PREDICTION_COLUMNS,
     collect_predictions,
     make_prediction_run_dir,
     save_predictions,
@@ -377,7 +378,7 @@ def _annotate_predictions(predictions: pd.DataFrame, window: ExperimentWindow) -
 
 def _concat_predictions(predictions: list[pd.DataFrame]) -> pd.DataFrame:
     if not predictions:
-        return pd.DataFrame({"y_true": pd.Series(dtype=float), "y_pred": pd.Series(dtype=float)})
+        return pd.DataFrame({column: pd.Series(dtype=float) for column in PREDICTION_COLUMNS})
     return pd.concat(predictions, ignore_index=True, sort=False)
 
 
