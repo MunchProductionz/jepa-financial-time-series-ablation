@@ -10,7 +10,7 @@ from ablation_study_jepa.datasets.windowed import WindowedStockDataset
 from ablation_study_jepa.features.returns import add_return_features
 
 
-def test_forward_return_uses_trading_day_rows_not_calendar_days() -> None:
+def test_forward_log_return_uses_trading_day_rows_not_calendar_days() -> None:
     frame = pd.DataFrame(
         {
             "ticker": ["A"] * 3,
@@ -22,8 +22,8 @@ def test_forward_return_uses_trading_day_rows_not_calendar_days() -> None:
 
     featured = add_return_features(frame, target_horizon=1)
 
-    assert featured.loc[0, "target_return"] == pytest.approx(0.10)
-    assert featured.loc[1, "target_return"] == pytest.approx(0.10)
+    assert featured.loc[0, "target_return"] == pytest.approx(0.09531018)
+    assert featured.loc[1, "target_return"] == pytest.approx(0.09531018)
 
 
 def test_window_dataset_excludes_train_targets_beyond_split_end() -> None:

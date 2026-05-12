@@ -1,7 +1,8 @@
-"""Feature and forward-return target creation."""
+"""Feature and forward log-return target creation."""
 
 from __future__ import annotations
 
+import numpy as np
 import pandas as pd
 
 
@@ -14,7 +15,7 @@ def add_return_features(
     target_horizon: int = 1,
     volume_column: str = "volume",
 ) -> pd.DataFrame:
-    """Add lagged return features and a trading-day forward-return target."""
+    """Add lagged return features and a trading-day forward log-return target."""
 
     if target_horizon <= 0:
         raise ValueError("target_horizon must be a positive trading-day offset")
@@ -43,8 +44,7 @@ def add_return_features(
         result["volume_zscore"] = 0.0
 
     future_close = close.shift(-target_horizon)
-    result[target_column] = future_close / result[price_column] - 1.0
+    result[target_column] = np.log(future_close / result[price_column])
     result[f"{target_column}_date"] = grouped[date_column].shift(-target_horizon)
     result[f"{target_column}_position"] = grouped.cumcount() + target_horizon
     return result
-

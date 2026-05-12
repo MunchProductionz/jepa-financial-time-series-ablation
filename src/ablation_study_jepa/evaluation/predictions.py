@@ -8,11 +8,12 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+import numpy as np
 import pandas as pd
 import torch
 from torch.utils.data import DataLoader
 
-PREDICTION_COLUMNS = ["y_true", "y_pred"]
+PREDICTION_COLUMNS = ["y_true", "y_pred", "y_true_return", "y_pred_return"]
 
 
 def collect_predictions(
@@ -75,7 +76,7 @@ def save_predictions(
     split: str,
 ) -> Path:
     path = Path(output_dir) / f"{split}.csv"
-    predictions.to_csv(path, index=False)
+    _with_simple_return_columns(predictions).to_csv(path, index=False)
     return path
 
 
@@ -96,12 +97,22 @@ def _metadata_rows(metadata: dict[str, Any], batch_size: int) -> list[dict[str, 
 def _prediction_frame(rows: list[dict[str, Any]]) -> pd.DataFrame:
     if rows:
         frame = pd.DataFrame(rows)
-        for column in PREDICTION_COLUMNS:
+        for column in ["y_true", "y_pred"]:
             if column not in frame.columns:
                 frame[column] = pd.Series(dtype=float)
+        frame = _with_simple_return_columns(frame)
         metadata_columns = [column for column in frame.columns if column not in PREDICTION_COLUMNS]
         return frame[[*metadata_columns, *PREDICTION_COLUMNS]]
     return pd.DataFrame({column: pd.Series(dtype=float) for column in PREDICTION_COLUMNS})
+
+
+def _with_simple_return_columns(predictions: pd.DataFrame) -> pd.DataFrame:
+    result = predictions.copy()
+    if "y_true" in result.columns:
+        result["y_true_return"] = np.expm1(result["y_true"].astype(float))
+    if "y_pred" in result.columns:
+        result["y_pred_return"] = np.expm1(result["y_pred"].astype(float))
+    return result
 
 
 def _safe_path_part(value: str) -> str:

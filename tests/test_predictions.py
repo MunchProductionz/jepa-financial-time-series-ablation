@@ -1,6 +1,7 @@
 import json
 
 import pandas as pd
+import pytest
 
 from ablation_study_jepa.api.experiment import (
     ExperimentRunner,
@@ -18,7 +19,7 @@ from ablation_study_jepa.evaluation.predictions import (
 def test_empty_prediction_frame_keeps_target_columns() -> None:
     frame = _prediction_frame([])
 
-    assert list(frame.columns) == ["y_true", "y_pred"]
+    assert list(frame.columns) == ["y_true", "y_pred", "y_true_return", "y_pred_return"]
     assert frame.empty
 
 
@@ -54,6 +55,20 @@ def test_prediction_artifacts_are_saved_inside_run_directory(tmp_path) -> None:
     assert run_dir.name.startswith("tft_jepa_last1_h1_lambda005_jepa_last_L_horizon_1_")
     assert path == run_dir / "test.csv"
     assert path.exists()
+
+
+def test_prediction_artifacts_convert_log_returns_to_simple_returns(tmp_path) -> None:
+    path = save_predictions(
+        pd.DataFrame({"y_true": [0.09531018], "y_pred": [0.18232156]}),
+        tmp_path,
+        "val",
+    )
+
+    saved = pd.read_csv(path)
+    assert saved.loc[0, "y_true"] == pytest.approx(0.09531018)
+    assert saved.loc[0, "y_pred"] == pytest.approx(0.18232156)
+    assert saved.loc[0, "y_true_return"] == pytest.approx(0.10)
+    assert saved.loc[0, "y_pred_return"] == pytest.approx(0.20)
 
 
 def test_metrics_json_groups_total_and_window_metrics(tmp_path) -> None:
