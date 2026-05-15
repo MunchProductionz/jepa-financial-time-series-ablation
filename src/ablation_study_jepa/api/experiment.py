@@ -150,6 +150,11 @@ class ExperimentRunner:
             val_predictions=str(prediction_paths.get("val", "")),
             test_predictions=str(prediction_paths.get("test", "")),
         )
+        _log_final_metrics_to_wandb(
+            enabled=self.config.logging.wandb.enabled,
+            val_metrics=val_metrics,
+            test_metrics=test_metrics,
+        )
         return ExperimentResult(
             run_name=self.config.run_name,
             val_metrics=val_metrics,
@@ -405,3 +410,24 @@ def _window_metrics_by_index(window_metrics: list[dict[str, Any]]) -> dict[str, 
         }
         for window in window_metrics
     }
+
+
+def _log_final_metrics_to_wandb(
+    enabled: bool,
+    val_metrics: dict[str, float],
+    test_metrics: dict[str, float],
+) -> None:
+    if not enabled:
+        return
+    try:
+        import wandb
+    except ModuleNotFoundError:
+        return
+    if wandb.run is None:
+        return
+    wandb.log(
+        {
+            **{f"val/{name}": value for name, value in val_metrics.items()},
+            **{f"test/{name}": value for name, value in test_metrics.items()},
+        }
+    )

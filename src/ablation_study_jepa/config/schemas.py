@@ -480,6 +480,7 @@ class NormalizationConfig(ExtraForbidModel):
 class FeatureConfig(ExtraForbidModel):
     price_column: str = "Price Close"
     volume_column: str = "Volume"
+    max_missing_fraction: float = 0.3
     sequence: list[str] = Field(
         default_factory=lambda: [
             "Price Open",
@@ -518,6 +519,13 @@ class FeatureConfig(ExtraForbidModel):
     )
     target: TargetFeatureConfig = Field(default_factory=TargetFeatureConfig)
     normalization: NormalizationConfig = Field(default_factory=NormalizationConfig)
+
+    @field_validator("max_missing_fraction")
+    @classmethod
+    def _valid_max_missing_fraction(cls, value: float) -> float:
+        if value < 0.0 or value > 1.0:
+            raise ValueError("max_missing_fraction must be between 0 and 1")
+        return value
 
 
 class SplitsConfig(ExtraForbidModel):
