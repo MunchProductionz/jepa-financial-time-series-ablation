@@ -1,10 +1,16 @@
 import pandas as pd
 import pytest
 
+from ablation_study_jepa.builders.data import _drop_sparse_feature_columns
 from ablation_study_jepa.data.preprocessing import PanelScaler
 from ablation_study_jepa.data.preprocessing import make_fraction_splits
 from ablation_study_jepa.builders.windows import build_experiment_windows
-from ablation_study_jepa.config.schemas import ExperimentConfig, SlidingWindowConfig, SplitsConfig
+from ablation_study_jepa.config.schemas import (
+    ExperimentConfig,
+    FeatureConfig,
+    SlidingWindowConfig,
+    SplitsConfig,
+)
 from ablation_study_jepa.data.synthetic import build_sample_panel
 from ablation_study_jepa.datasets.windowed import WindowedStockDataset
 from ablation_study_jepa.features.returns import add_return_features
@@ -68,6 +74,28 @@ def test_fraction_splits_use_chronological_available_dates() -> None:
     assert splits["val"].end == pd.Timestamp(frame["date"].iloc[8])
     assert splits["test"].start == splits["val"].end
     assert splits["test"].end == pd.Timestamp(frame["date"].iloc[9])
+
+
+def test_sparse_feature_columns_are_removed_after_preprocessing() -> None:
+    frame = pd.DataFrame(
+        {
+            "keep": [1.0] * 10,
+            "edge": [None, None, None, *([1.0] * 7)],
+            "drop": [None, None, None, None, *([1.0] * 6)],
+        }
+    )
+    config = ExperimentConfig(
+        features=FeatureConfig(
+            sequence=["keep", "edge", "drop"],
+            max_missing_fraction=0.3,
+        ),
+        splits=SplitsConfig(method="fraction"),
+    )
+
+    _drop_sparse_feature_columns(frame, config)
+
+    assert config.data.feature_columns == ["keep", "edge"]
+    assert config.features.sequence == ["keep", "edge"]
 
 
 def test_sliding_windows_align_last_window_and_drop_incomplete_first_window() -> None:

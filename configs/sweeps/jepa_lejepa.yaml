@@ -1,4 +1,11 @@
 program: ablation-study-jepa
+command:
+  - ${env}
+  - uv
+  - run
+  - ablation-study-jepa
+  - run
+  - ${args}
 method: grid
 metric:
   name: val/mse
@@ -21,3 +28,9 @@ parameters:
       - [1, 5, 20, 60]
   jepa.lejepa.detach_target:
     values: [false, true]
+  logging.wandb.enabled:
+    value: true
+  logging.wandb.mode:
+    value: online
+  logging.wandb.project:
+    value: ablation-study-jepa

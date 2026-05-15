@@ -4,12 +4,44 @@ from __future__ import annotations
 
 import argparse
 from pathlib import Path
+from typing import Any
+
+import yaml
 
 
 def _run(args: argparse.Namespace) -> None:
-    from ablation_study_jepa.api.experiment import run_experiment
+    from ablation_study_jepa.api.experiment import ExperimentRunner
+    from ablation_study_jepa.config.loader import load_config
 
-    run_experiment(Path(args.config))
+    config = load_config(Path(args.config), overrides=args.overrides)
+    ExperimentRunner(config).run()
+
+
+def _sweep(args: argparse.Namespace) -> None:
+    import wandb
+
+    sweep_config = load_sweep_config(Path(args.config))
+    project = args.project or sweep_config.get("project", "ablation-study-jepa")
+    prepare_sweep_config(sweep_config, project=project)
+
+    sweep_id = wandb.sweep(sweep=sweep_config, project=project, entity=args.entity)
+    api = wandb.Api()
+    entity = args.entity or api.default_entity
+    qualified_sweep_id = f"{entity}/{project}/{sweep_id}"
+    print(f"Created W&B sweep: {qualified_sweep_id}")
+    print(f"View sweep at: https://wandb.ai/{entity}/{project}/sweeps/{sweep_id}")
+    print(f"Run agent with: uv run wandb agent {qualified_sweep_id}")
+
+    if args.count is not None:
+        if args.count <= 0:
+            raise ValueError("--count must be a positive integer")
+        wandb.agent(
+            sweep_id=sweep_id,
+            entity=entity,
+            project=project,
+            count=args.count,
+            forward_signals=args.forward_signals,
+        )
 
 
 def _build_sample_data(args: argparse.Namespace) -> None:
@@ -74,6 +106,27 @@ def build_parser() -> argparse.ArgumentParser:
     run_parser.add_argument("--config", required=True, help="Path to experiment YAML.")
     run_parser.set_defaults(func=_run)
 
+    sweep_parser = subparsers.add_parser(
+        "sweep",
+        help="Create a W&B sweep from a sweep YAML and optionally run a local agent.",
+    )
+    sweep_parser.add_argument("config_path", nargs="?", help="Path to W&B sweep YAML.")
+    sweep_parser.add_argument("--config", dest="config_flag", help="Path to W&B sweep YAML.")
+    sweep_parser.add_argument("--project", default=None, help="W&B project name.")
+    sweep_parser.add_argument("--entity", default=None, help="W&B entity/team name.")
+    sweep_parser.add_argument(
+        "--count",
+        type=int,
+        default=None,
+        help="If set, start an agent and run at most N sweep trials.",
+    )
+    sweep_parser.add_argument(
+        "--forward-signals",
+        action="store_true",
+        help="Forward interrupt/termination signals from the agent to child runs.",
+    )
+    sweep_parser.set_defaults(func=_sweep)
+
     sample_parser = subparsers.add_parser(
         "build-sample-data", help="Create a deterministic synthetic OHLCV panel."
     )
@@ -110,9 +163,79 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def load_sweep_config(path: Path) -> dict[str, Any]:
+    with path.open("r", encoding="utf-8") as handle:
+        loaded = yaml.safe_load(handle) or {}
+    if not isinstance(loaded, dict):
+        raise ValueError(f"Expected mapping at top level of {path}")
+    return loaded
+
+
+def prepare_sweep_config(sweep_config: dict[str, Any], project: str) -> None:
+    sweep_config.setdefault(
+        "command",
+        [
+            "${env}",
+            "uv",
+            "run",
+            "ablation-study-jepa",
+            "run",
+            "${args}",
+        ],
+    )
+    parameters = sweep_config.setdefault("parameters", {})
+    if not isinstance(parameters, dict):
+        raise ValueError("Sweep config 'parameters' must be a mapping")
+    _setdefault_sweep_parameter(parameters, "logging.wandb.enabled", True)
+    _setdefault_sweep_parameter(parameters, "logging.wandb.mode", "online")
+    _setdefault_sweep_parameter(parameters, "logging.wandb.project", project)
+
+
+def parse_dotted_overrides(tokens: list[str]) -> dict[str, Any]:
+    overrides: dict[str, Any] = {}
+    index = 0
+    while index < len(tokens):
+        token = tokens[index]
+        if not token.startswith("--"):
+            raise ValueError(f"Expected override flag starting with '--', got {token!r}")
+        flag = token[2:]
+        if "=" in flag:
+            key, raw_value = flag.split("=", 1)
+        else:
+            if index + 1 >= len(tokens) or tokens[index + 1].startswith("--"):
+                raise ValueError(f"Override {token!r} requires a value")
+            key = flag
+            index += 1
+            raw_value = tokens[index]
+        if "." not in key:
+            raise ValueError(f"Override key must use dotted form, got {key!r}")
+        overrides[key] = yaml.safe_load(raw_value)
+        index += 1
+    return overrides
+
+
+def _setdefault_sweep_parameter(
+    parameters: dict[str, Any],
+    name: str,
+    value: Any,
+) -> None:
+    parameters.setdefault(name, {"value": value})
+
+
 def main() -> None:
     parser = build_parser()
-    args = parser.parse_args()
+    args, unknown = parser.parse_known_args()
+    if args.command == "run":
+        try:
+            args.overrides = parse_dotted_overrides(unknown)
+        except ValueError as exc:
+            parser.error(str(exc))
+    elif unknown:
+        parser.error(f"unrecognized arguments: {' '.join(unknown)}")
+    if args.command == "sweep":
+        args.config = args.config_flag or args.config_path
+        if args.config is None:
+            parser.error("sweep requires a config path")
     args.func(args)
 
 

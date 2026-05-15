@@ -1,5 +1,6 @@
 import pytest
 
+from ablation_study_jepa.cli import parse_dotted_overrides, prepare_sweep_config
 from ablation_study_jepa.config.loader import load_config
 from ablation_study_jepa.config.schemas import (
     ExperimentConfig,
@@ -40,6 +41,58 @@ def test_yaml_defaults_loader_merges_base_config() -> None:
     assert config.model.use_causal_mask is True
 
 
+def test_dotted_overrides_are_applied_to_loaded_config() -> None:
+    config = load_config(
+        "configs/exp/jepa_ablation.yaml",
+        overrides={
+            "jepa.num_jepa_layers": 2,
+            "jepa.horizons": [1, 5],
+            "logging.wandb.enabled": True,
+        },
+    )
+
+    assert config.jepa.num_jepa_layers == 2
+    assert config.jepa.horizons == [1, 5]
+    assert config.logging.wandb.enabled is True
+
+
+def test_cli_parses_wandb_style_dotted_overrides() -> None:
+    overrides = parse_dotted_overrides(
+        [
+            "--jepa.num_jepa_layers=2",
+            "--jepa.horizons=[1, 5, 20]",
+            "--logging.wandb.enabled=true",
+        ]
+    )
+
+    assert overrides == {
+        "jepa.num_jepa_layers": 2,
+        "jepa.horizons": [1, 5, 20],
+        "logging.wandb.enabled": True,
+    }
+
+
+def test_sweep_config_gets_repo_safe_command_and_wandb_defaults() -> None:
+    sweep_config = {
+        "program": "ablation-study-jepa",
+        "method": "grid",
+        "parameters": {"config": {"value": "configs/exp/jepa_ablation.yaml"}},
+    }
+
+    prepare_sweep_config(sweep_config, project="ablation-study-jepa")
+
+    assert sweep_config["command"] == [
+        "${env}",
+        "uv",
+        "run",
+        "ablation-study-jepa",
+        "run",
+        "${args}",
+    ]
+    assert sweep_config["parameters"]["logging.wandb.enabled"] == {"value": True}
+    assert sweep_config["parameters"]["logging.wandb.mode"] == {"value": "online"}
+
+
 def test_legacy_flat_contrastive_config_is_migrated() -> None:
     config = JEPAConfig(enabled=True, temperature=0.2, negative_strategy="in_batch_all")
 
@@ -51,6 +104,7 @@ def test_lejepa_config_parses_separate_loss_settings() -> None:
     config = load_config("configs/exp/lejepa_ablation.yaml")
 
     assert config.jepa.mode == "lejepa"
+    assert config.features.max_missing_fraction == pytest.approx(0.3)
     assert config.jepa.resolve_selected_layers(config.model.num_transformer_blocks) == [2, 3]
     assert config.jepa.normalized_layer_weights([2, 3]) == [1 / 3, 2 / 3]
     assert config.jepa.lejepa.detach_target is False

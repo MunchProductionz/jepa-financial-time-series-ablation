@@ -80,6 +80,7 @@ data:
 features:
   price_column: "Price Close"
   volume_column: Volume
+  max_missing_fraction: 0.3
   sequence:
     - "Price Open"
     - "Price High"

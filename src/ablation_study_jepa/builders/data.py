@@ -93,6 +93,7 @@ def build_feature_panel(config: ExperimentConfig) -> PreparedPanel:
     missing_features = [column for column in config.data.feature_columns if column not in featured.columns]
     if missing_features:
         raise ValueError(f"Configured feature columns were not created/found: {missing_features}")
+    _drop_sparse_feature_columns(featured, config)
 
     return PreparedPanel(raw_panel=cleaned, feature_panel=featured)
 
@@ -178,3 +179,45 @@ def add_sector_one_hot_features(
     if unknown_column is not None:
         result[unknown_column] = (~matched).astype(float)
     return result
+
+
+def _drop_sparse_feature_columns(frame: pd.DataFrame, config: ExperimentConfig) -> None:
+    """Remove sequence features whose post-feature-engineering missingness is too high."""
+
+    threshold = config.features.max_missing_fraction
+    feature_columns = list(config.data.feature_columns)
+    if not feature_columns:
+        raise ValueError("At least one feature column is required")
+
+    missing_fractions = frame[feature_columns].isna().mean(axis=0)
+    dropped = [
+        column
+        for column, missing_fraction in missing_fractions.items()
+        if float(missing_fraction) > threshold
+    ]
+    if not dropped:
+        return
+
+    kept = [column for column in feature_columns if column not in dropped]
+    if not kept:
+        raise ValueError(
+            "All configured feature columns exceed "
+            f"features.max_missing_fraction={threshold:g}: {dropped}"
+        )
+
+    config.data.feature_columns = kept
+    config.features.sequence = kept
+    config.data.fast_feature_columns = [
+        column for column in config.data.fast_feature_columns if column in kept
+    ]
+    config.data.slow_feature_columns = [
+        column for column in config.data.slow_feature_columns if column in kept
+    ]
+    summary = ", ".join(
+        f"{column}={missing_fractions[column]:.1%}" for column in dropped
+    )
+    print(
+        "[data] dropped sparse feature columns "
+        f"threshold={threshold:.0%} columns={summary}",
+        flush=True,
+    )

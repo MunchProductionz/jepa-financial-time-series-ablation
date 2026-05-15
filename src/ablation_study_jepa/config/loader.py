@@ -11,8 +11,10 @@ import yaml
 from ablation_study_jepa.config.schemas import ExperimentConfig
 
 
-def load_config(path: str | Path) -> ExperimentConfig:
+def load_config(path: str | Path, overrides: dict[str, Any] | None = None) -> ExperimentConfig:
     raw = load_config_dict(path)
+    if overrides:
+        raw = apply_dotted_overrides(raw, overrides)
     return ExperimentConfig.model_validate(raw)
 
 
@@ -67,3 +69,25 @@ def deep_merge(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any]
             result[key] = deepcopy(value)
     return result
 
+
+def apply_dotted_overrides(base: dict[str, Any], overrides: dict[str, Any]) -> dict[str, Any]:
+    """Apply ``{"a.b": value}`` overrides to a nested config dictionary."""
+
+    nested: dict[str, Any] = {}
+    for dotted_key, value in overrides.items():
+        if not dotted_key or dotted_key.startswith(".") or dotted_key.endswith("."):
+            raise ValueError(f"Invalid override key: {dotted_key!r}")
+        cursor = nested
+        parts = dotted_key.split(".")
+        for part in parts[:-1]:
+            if not part:
+                raise ValueError(f"Invalid override key: {dotted_key!r}")
+            existing = cursor.setdefault(part, {})
+            if not isinstance(existing, dict):
+                raise ValueError(f"Override key conflict at {part!r} in {dotted_key!r}")
+            cursor = existing
+        leaf = parts[-1]
+        if not leaf:
+            raise ValueError(f"Invalid override key: {dotted_key!r}")
+        cursor[leaf] = value
+    return deep_merge(base, nested)

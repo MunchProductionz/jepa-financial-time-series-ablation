@@ -1,4 +1,11 @@
 program: ablation-study-jepa
+command:
+  - ${env}
+  - uv
+  - run
+  - ablation-study-jepa
+  - run
+  - ${args}
 method: grid # values: grid, random, bayes
 metric:
   name: val/mse
@@ -12,3 +19,9 @@ parameters:
     values: [0.001, 0.01, 0.05, 0.1, 0.2]
   jepa.projection_dim:
     values: [32, 64, 128, 256]
+  logging.wandb.enabled:
+    value: true
+  logging.wandb.mode:
+    value: online
+  logging.wandb.project:
+    value: ablation-study-jepa
