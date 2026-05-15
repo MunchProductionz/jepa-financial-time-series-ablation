@@ -1,7 +1,10 @@
+import json
 from pathlib import Path
 
 import pandas as pd
 
+from ablation_study_jepa.data import sp500_universe
+from ablation_study_jepa.data import yahoo
 from ablation_study_jepa.builders.data import add_sector_one_hot_features
 from ablation_study_jepa.data.fred_md import (
     fred_md_candidate_urls,
@@ -12,10 +15,21 @@ from ablation_study_jepa.data.yahoo import (
     parse_tickers,
     normalize_yahoo_price_frame,
 )
+from ablation_study_jepa.data.sp500_universe import (
+    build_sp500_universe,
+    download_sp500_universe_prices,
+    ticker_candidates,
+    wikipedia_sp500_change_events,
+    wrds_sp500_intervals,
+)
 
 
 def test_parse_tickers_deduplicates_and_normalizes() -> None:
     assert parse_tickers("aapl, MSFT, aapl") == ["AAPL", "MSFT"]
+
+
+def test_ticker_candidates_convert_share_class_syntax() -> None:
+    assert ticker_candidates("brk.b, BF.B, old") == ["BRK-B", "BF-B", "OLD"]
 
 
 def test_normalize_yahoo_price_frame_uses_panel_schema() -> None:
@@ -46,6 +60,232 @@ def test_normalize_yahoo_price_frame_uses_panel_schema() -> None:
     ]
     assert panel["ticker"].tolist() == ["AAPL", "AAPL"]
     assert panel["date"].tolist() == ["2025-01-02", "2025-01-03"]
+
+
+def test_download_yahoo_prices_can_continue_after_empty_response(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    class FakeYfinance:
+        @staticmethod
+        def download(*args, **kwargs) -> pd.DataFrame:
+            return pd.DataFrame()
+
+    monkeypatch.setattr(yahoo, "_import_yfinance", lambda: FakeYfinance)
+
+    results = yahoo.download_yahoo_prices(
+        tickers=["MISSING"],
+        output_dir=tmp_path,
+        continue_on_error=True,
+    )
+
+    assert results[0].status == "failed"
+    assert results[0].ticker == "MISSING"
+    assert "No price data returned" in str(results[0].error)
+
+
+def test_wrds_sp500_intervals_parse_membership_rows() -> None:
+    html = """
+    <table>
+      <tr>
+        <th>Added/Removed</th><th>PERMNO</th><th>Company</th>
+        <th>Ticker</th><th>SP500 Start</th><th>SP500 End</th>
+      </tr>
+      <tr>
+        <td>Added</td><td>12345</td><td>Legacy Co</td>
+        <td>OLD, NEW</td><td>1959-04-01</td><td>2022-12-30</td>
+      </tr>
+      <tr>
+        <td>Removed</td><td>22222</td><td>Exit Co</td>
+        <td>EXT</td><td>1957-03-01</td><td>1959-12-31</td>
+      </tr>
+    </table>
+    """
+
+    intervals = wrds_sp500_intervals(html)
+
+    assert intervals["ticker_raw"].tolist() == ["OLD, NEW"]
+    assert intervals["permno"].astype(str).tolist() == ["12345"]
+
+
+def test_wikipedia_change_events_parse_added_and_removed_tickers() -> None:
+    html = """
+    <table>
+      <tr><th>Symbol</th><th>Security</th><th>Date added</th></tr>
+      <tr><td>ABC</td><td>ABC Corp</td><td>2023-01-01</td></tr>
+    </table>
+    <table>
+      <tr>
+        <th>Effective Date</th><th>Added Ticker</th><th>Added Security</th>
+        <th>Removed Ticker</th><th>Removed Security</th><th>Reason</th>
+      </tr>
+      <tr>
+        <td>January 2, 2024</td><td>ADD</td><td>Add Co</td>
+        <td>REM</td><td>Remove Co</td><td>Market capitalization change.</td>
+      </tr>
+    </table>
+    """
+
+    events = wikipedia_sp500_change_events(html)
+
+    assert events[["event_type", "ticker"]].to_dict("records") == [
+        {"event_type": "added", "ticker": "ADD"},
+        {"event_type": "removed", "ticker": "REM"},
+    ]
+
+
+def test_build_sp500_universe_writes_candidate_csv(tmp_path: Path) -> None:
+    wrds_html = """
+    <table>
+      <tr>
+        <th>Added/Removed</th><th>PERMNO</th><th>Company</th>
+        <th>Ticker</th><th>SP500 Start</th><th>SP500 End</th>
+      </tr>
+      <tr>
+        <td>Added</td><td>12345</td><td>Legacy Co</td>
+        <td>OLD</td><td>1959-04-01</td><td>2022-12-30</td>
+      </tr>
+    </table>
+    """
+    wiki_html = """
+    <table>
+      <tr><th>Symbol</th><th>Security</th><th>Date added</th></tr>
+      <tr><td>BRK.B</td><td>Berkshire Hathaway</td><td>2010-02-16</td></tr>
+    </table>
+    <table>
+      <tr>
+        <th>Effective Date</th><th>Added Ticker</th><th>Added Security</th>
+        <th>Removed Ticker</th><th>Removed Security</th><th>Reason</th>
+      </tr>
+      <tr>
+        <td>January 2, 2024</td><td>ADD</td><td>Add Co</td>
+        <td>OLD</td><td>Legacy Co</td><td>Market capitalization change.</td>
+      </tr>
+    </table>
+    """
+    output = tmp_path / "sp500.csv"
+
+    result = build_sp500_universe(
+        output_path=output,
+        wrds_source=wrds_html,
+        wikipedia_source=wiki_html,
+    )
+    universe = pd.read_csv(output)
+    lookup = json.loads(output.with_suffix(".json").read_text())
+
+    assert result.unique_tickers == 3
+    assert result.json_path == output.with_suffix(".json")
+    assert set(universe["ticker"]) == {"ADD", "BRK-B", "OLD"}
+    assert universe.loc[universe["ticker"].eq("OLD"), "left_sp500_year"].tolist() == [2024]
+    assert lookup["tickers"]["OLD"]["sp500_periods"][0]["From"] == 1959
+    assert lookup["tickers"]["OLD"]["sp500_periods"][0]["To"] == 2024
+    assert lookup["tickers"]["BRK-B"]["sp500_periods"][0]["To"] is None
+
+
+def test_download_sp500_prices_resumes_from_json_and_notes_unavailable(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    universe = pd.DataFrame(
+        [
+            {
+                "ticker": "A",
+                "ticker_raw": "A",
+                "yahoo_ticker_candidates": "A",
+                "company": "Downloaded Co",
+                "permno": "",
+                "sp500_start_date": "2000-01-01",
+                "sp500_end_date": "",
+                "first_year_available": "",
+                "entered_sp500_year": 2000,
+                "left_sp500_year": "",
+                "delisted_or_shutdown_year": "",
+                "is_current_sp500": True,
+                "membership_status": "current",
+                "source": "test",
+                "notes": "",
+            },
+            {
+                "ticker": "ZZZ",
+                "ticker_raw": "ZZZ",
+                "yahoo_ticker_candidates": "ZZZ",
+                "company": "Unavailable Co",
+                "permno": "",
+                "sp500_start_date": "1960-01-01",
+                "sp500_end_date": "1970-01-01",
+                "first_year_available": "",
+                "entered_sp500_year": 1960,
+                "left_sp500_year": 1970,
+                "delisted_or_shutdown_year": "",
+                "is_current_sp500": False,
+                "membership_status": "closed",
+                "source": "test",
+                "notes": "",
+            },
+        ]
+    )
+    universe_path = tmp_path / "sp500.csv"
+    lookup_path = tmp_path / "sp500.json"
+    price_dir = tmp_path / "prices"
+    manifest_path = tmp_path / "manifest.csv"
+    unavailable_path = tmp_path / "unavailable.csv"
+    price_dir.mkdir()
+    universe.to_csv(universe_path, index=False)
+    (price_dir / "A.csv").write_text(
+        "ticker,date,open,high,low,close,adj_close,volume\n"
+        "A,2025-01-02,1,2,0.5,1.5,1.4,100\n"
+    )
+    calls = []
+
+    def fake_download_yahoo_prices(**kwargs):
+        calls.extend(kwargs["tickers"])
+        return [
+            yahoo.YahooPriceDownloadResult(
+                ticker="ZZZ",
+                path=price_dir / "ZZZ.csv",
+                rows=0,
+                start_date=None,
+                end_date=None,
+                status="failed",
+                error="No price data returned for ZZZ.",
+            )
+        ]
+
+    monkeypatch.setattr(sp500_universe, "download_yahoo_prices", fake_download_yahoo_prices)
+    progress_messages = []
+
+    results = download_sp500_universe_prices(
+        universe_path=universe_path,
+        output_dir=price_dir,
+        manifest_path=manifest_path,
+        lookup_json_path=lookup_path,
+        unavailable_path=unavailable_path,
+        progress_printer=progress_messages.append,
+    )
+
+    assert calls == ["ZZZ"]
+    assert [result.status for result in results] == ["json_skipped", "failed"]
+    assert "[1/2] A: json_skipped" in progress_messages[0]
+    assert "ETA=" in progress_messages[1]
+    lookup = json.loads(lookup_path.read_text())
+    assert lookup["tickers"]["A"]["download"]["status"] == "downloaded"
+    assert lookup["tickers"]["ZZZ"]["download"]["status"] == "failed"
+    unavailable = pd.read_csv(unavailable_path)
+    assert unavailable["ticker"].tolist() == ["ZZZ"]
+    assert unavailable["reason"].tolist() == ["yahoo_download_failed_delisted_or_historical"]
+
+    calls.clear()
+    resumed = download_sp500_universe_prices(
+        universe_path=universe_path,
+        output_dir=price_dir,
+        manifest_path=manifest_path,
+        lookup_json_path=lookup_path,
+        unavailable_path=unavailable_path,
+        progress_printer=None,
+    )
+
+    assert calls == []
+    assert [result.status for result in resumed] == ["json_skipped", "json_failed_skipped"]
 
 
 def test_fred_md_candidate_urls_include_vintage_csv() -> None:

@@ -70,12 +70,65 @@ def _download_yahoo_prices(args: argparse.Namespace) -> None:
         skip_existing=not args.overwrite,
         overwrite=args.overwrite,
         progress=args.progress,
+        continue_on_error=args.continue_on_error,
     )
     for result in results:
         print(
             f"{result.status}: {result.ticker} -> {result.path} "
             f"({result.rows:,} rows, {result.start_date} to {result.end_date})"
         )
+        if result.error:
+            print(f"  error: {result.error}")
+
+
+def _build_sp500_universe(args: argparse.Namespace) -> None:
+    from ablation_study_jepa.data.sp500_universe import build_sp500_universe
+
+    result = build_sp500_universe(
+        output_path=args.output,
+        json_path=args.json_output,
+        start_date=args.start_date,
+        end_date=args.end_date,
+        wrds_source=args.wrds_source,
+        wikipedia_source=args.wikipedia_source,
+    )
+    print(
+        f"Wrote {result.rows:,} universe rows to {result.path} "
+        f"and lookup JSON to {result.json_path} "
+        f"({result.unique_tickers:,} unique tickers, "
+        f"{result.current_tickers:,} current rows, "
+        f"{result.missing_ticker_rows:,} source rows without tickers)"
+    )
+
+
+def _download_sp500_prices(args: argparse.Namespace) -> None:
+    from ablation_study_jepa.data.sp500_universe import download_sp500_universe_prices
+
+    results = download_sp500_universe_prices(
+        universe_path=args.universe,
+        output_dir=args.output_dir,
+        start_date=args.start_date,
+        end_date=args.end_date,
+        ticker_column=args.ticker_column,
+        skip_existing=not args.overwrite,
+        overwrite=args.overwrite,
+        progress=args.progress,
+        continue_on_error=not args.stop_on_error,
+        manifest_path=args.manifest,
+        lookup_json_path=args.lookup_json,
+        unavailable_path=args.unavailable,
+        max_tickers=args.max_tickers,
+        eta_window=args.eta_window,
+        retry_failed=args.retry_failed,
+        progress_printer=print,
+    )
+    statuses: dict[str, int] = {}
+    for result in results:
+        statuses[result.status] = statuses.get(result.status, 0) + 1
+    status_text = ", ".join(f"{status}={count:,}" for status, count in sorted(statuses.items()))
+    print(f"Processed {len(results):,} tickers: {status_text}")
+    if args.manifest:
+        print(f"Manifest -> {args.manifest}")
 
 
 def _download_fred_md(args: argparse.Namespace) -> None:
@@ -147,7 +200,74 @@ def build_parser() -> argparse.ArgumentParser:
     yahoo_parser.add_argument("--end-date", default="2025-12-31")
     yahoo_parser.add_argument("--overwrite", action="store_true")
     yahoo_parser.add_argument("--progress", action="store_true")
+    yahoo_parser.add_argument("--continue-on-error", action="store_true")
     yahoo_parser.set_defaults(func=_download_yahoo_prices)
+
+    sp500_universe_parser = subparsers.add_parser(
+        "build-sp500-universe",
+        help="Build a survivorship-aware S&P 500 universe CSV from public change tables.",
+    )
+    sp500_universe_parser.add_argument("--output", default="data/universe/sp500_since_1960.csv")
+    sp500_universe_parser.add_argument(
+        "--json-output",
+        default="data/universe/sp500_since_1960.json",
+        help="Path for the ticker lookup JSON used by the downloader.",
+    )
+    sp500_universe_parser.add_argument("--start-date", default="1960-01-01")
+    sp500_universe_parser.add_argument("--end-date", default="2025-12-31")
+    sp500_universe_parser.add_argument(
+        "--wrds-source",
+        default="https://wrds-www.wharton.upenn.edu/classroom/sp500-introduction/over-time/",
+        help="WRDS classroom S&P 500 changes URL or a local saved HTML file.",
+    )
+    sp500_universe_parser.add_argument(
+        "--wikipedia-source",
+        default="https://en.wikipedia.org/wiki/List_of_S%26P_500_companies",
+        help="Wikipedia S&P 500 companies URL or a local saved HTML file.",
+    )
+    sp500_universe_parser.set_defaults(func=_build_sp500_universe)
+
+    sp500_prices_parser = subparsers.add_parser(
+        "download-sp500-prices",
+        help="Download Yahoo prices for every ticker in an S&P 500 universe CSV.",
+    )
+    sp500_prices_parser.add_argument("--universe", default="data/universe/sp500_since_1960.csv")
+    sp500_prices_parser.add_argument("--output-dir", default="data/prices")
+    sp500_prices_parser.add_argument("--start-date", default="1960-01-01")
+    sp500_prices_parser.add_argument("--end-date", default="2025-12-31")
+    sp500_prices_parser.add_argument("--ticker-column", default="ticker")
+    sp500_prices_parser.add_argument("--manifest", default="data/prices/download_manifest.csv")
+    sp500_prices_parser.add_argument(
+        "--lookup-json",
+        default="data/universe/sp500_since_1960.json",
+        help="Durable ticker lookup/resume state JSON.",
+    )
+    sp500_prices_parser.add_argument(
+        "--unavailable",
+        default="data/prices/unavailable_tickers.csv",
+        help="CSV of source rows and ticker attempts not retrievable from Yahoo.",
+    )
+    sp500_prices_parser.add_argument(
+        "--max-tickers",
+        type=int,
+        default=None,
+        help="Optional cap for smoke tests or chunked downloads.",
+    )
+    sp500_prices_parser.add_argument("--overwrite", action="store_true")
+    sp500_prices_parser.add_argument("--progress", action="store_true")
+    sp500_prices_parser.add_argument("--stop-on-error", action="store_true")
+    sp500_prices_parser.add_argument(
+        "--retry-failed",
+        action="store_true",
+        help="Retry tickers previously marked failed in the lookup JSON.",
+    )
+    sp500_prices_parser.add_argument(
+        "--eta-window",
+        type=int,
+        default=10,
+        help="Number of recent retrieved tickers to average for ETA reporting.",
+    )
+    sp500_prices_parser.set_defaults(func=_download_sp500_prices)
 
     fred_md_parser = subparsers.add_parser(
         "download-fred-md",
