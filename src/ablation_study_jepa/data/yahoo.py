@@ -35,6 +35,7 @@ class YahooPriceDownloadResult:
     start_date: str | None
     end_date: str | None
     status: str
+    error: str | None = None
 
 
 def parse_tickers(tickers: str | Iterable[str]) -> list[str]:
@@ -153,6 +154,7 @@ def download_yahoo_prices(
     overwrite: bool = False,
     progress: bool = False,
     timeout: float | None = 30,
+    continue_on_error: bool = False,
 ) -> list[YahooPriceDownloadResult]:
     """Download daily Yahoo Finance OHLCV files, one CSV per ticker.
 
@@ -183,19 +185,35 @@ def download_yahoo_prices(
             )
             continue
 
-        raw = yf.download(
-            ticker,
-            start=start_date,
-            end=_exclusive_end_date(end_date),
-            interval="1d",
-            auto_adjust=False,
-            actions=False,
-            progress=progress,
-            threads=False,
-            timeout=timeout,
-            multi_level_index=False,
-        )
-        normalized = normalize_yahoo_price_frame(raw, ticker)
+        try:
+            raw = yf.download(
+                ticker,
+                start=start_date,
+                end=_exclusive_end_date(end_date),
+                interval="1d",
+                auto_adjust=False,
+                actions=False,
+                progress=progress,
+                threads=False,
+                timeout=timeout,
+                multi_level_index=False,
+            )
+            normalized = normalize_yahoo_price_frame(raw, ticker)
+        except Exception as exc:
+            if not continue_on_error:
+                raise
+            results.append(
+                YahooPriceDownloadResult(
+                    ticker=ticker,
+                    path=path,
+                    rows=0,
+                    start_date=None,
+                    end_date=None,
+                    status="failed",
+                    error=str(exc),
+                )
+            )
+            continue
 
         if path.exists() and not overwrite:
             existing = pd.read_csv(path)
