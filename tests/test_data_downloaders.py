@@ -18,6 +18,7 @@ from ablation_study_jepa.data.yahoo import (
 from ablation_study_jepa.data.sp500_universe import (
     build_sp500_universe,
     download_sp500_universe_prices,
+    ensure_sp500_universe_json,
     ticker_candidates,
     wikipedia_sp500_change_events,
     wrds_sp500_intervals,
@@ -286,6 +287,37 @@ def test_download_sp500_prices_resumes_from_json_and_notes_unavailable(
 
     assert calls == []
     assert [result.status for result in resumed] == ["json_skipped", "json_failed_skipped"]
+
+
+def test_universe_json_recovers_from_empty_file(tmp_path: Path) -> None:
+    universe = pd.DataFrame(
+        [
+            {
+                "ticker": "A",
+                "ticker_raw": "A",
+                "yahoo_ticker_candidates": "A",
+                "company": "Example Co",
+                "permno": "",
+                "sp500_start_date": "2000-01-01",
+                "sp500_end_date": "",
+                "first_year_available": "",
+                "entered_sp500_year": 2000,
+                "left_sp500_year": "",
+                "delisted_or_shutdown_year": "",
+                "is_current_sp500": True,
+                "membership_status": "current",
+                "source": "test",
+                "notes": "",
+            }
+        ]
+    )
+    json_path = tmp_path / "sp500.json"
+    json_path.write_text("")
+
+    lookup = ensure_sp500_universe_json(universe, json_path=json_path)
+
+    assert lookup["tickers"]["A"]["sp500_periods"][0]["From"] == 2000
+    assert json.loads(json_path.read_text())["tickers"]["A"]["is_current_sp500"] is True
 
 
 def test_fred_md_candidate_urls_include_vintage_csv() -> None:

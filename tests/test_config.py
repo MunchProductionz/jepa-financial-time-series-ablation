@@ -37,6 +37,7 @@ def test_yaml_defaults_loader_merges_base_config() -> None:
     assert config.jepa.resolve_selected_layers(config.model.num_transformer_blocks) == [3]
     assert config.jepa.contrastive.temperature == pytest.approx(0.1)
     assert config.jepa.contrastive.negative_strategy == "mixed"
+    assert config.data.data_dir.as_posix() == "data/prices/sp500"
     assert config.data.fit_scaler_on_train_only is True
     assert config.model.use_causal_mask is True
 

@@ -3,7 +3,7 @@ run_name: base_tft_1d
 
 data:
   loader: ablation_study_jepa.data.loaders:load_price_panel
-  data_dir: data/prices
+  data_dir: data/prices/sp500
   macro_data_path: data/macro/fred_md/fred_md_1960_2025.csv
   macro_date_column: date
   macro_feature_columns:

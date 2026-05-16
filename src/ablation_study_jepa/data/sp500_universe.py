@@ -860,8 +860,11 @@ def _read_lookup_json(path: str | Path) -> dict[str, Any]:
     path = Path(path)
     if not path.exists():
         return {}
-    with path.open("r", encoding="utf-8") as handle:
-        loaded = json.load(handle)
+    try:
+        with path.open("r", encoding="utf-8") as handle:
+            loaded = json.load(handle)
+    except json.JSONDecodeError:
+        return {}
     return loaded if isinstance(loaded, dict) else {}
 
 
@@ -870,9 +873,11 @@ def _write_lookup_json(lookup: dict[str, Any], path: str | Path) -> Path:
     path.parent.mkdir(parents=True, exist_ok=True)
     lookup["updated_at_utc"] = _utc_now()
     lookup["_path"] = str(path)
-    with path.open("w", encoding="utf-8") as handle:
+    tmp_path = path.with_name(f"{path.name}.tmp")
+    with tmp_path.open("w", encoding="utf-8") as handle:
         json.dump(_without_private_keys(lookup), handle, indent=2, sort_keys=True)
         handle.write("\n")
+    tmp_path.replace(path)
     lookup["_path"] = str(path)
     return path
 

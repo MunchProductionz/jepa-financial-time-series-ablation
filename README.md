@@ -12,7 +12,7 @@ uv run ablation-study-jepa download-yahoo-prices \
   --tickers AAPL,MSFT,NVDA,AMZN \
   --start-date 1960-01-01 \
   --end-date 2025-12-31 \
-  --output-dir data/prices
+  --output-dir data/prices/sp500
 
 uv run ablation-study-jepa build-sp500-universe \
   --output data/universe/sp500_since_1960.csv \
@@ -23,15 +23,15 @@ uv run ablation-study-jepa download-sp500-prices \
   --lookup-json data/universe/sp500_since_1960.json \
   --start-date 1960-01-01 \
   --end-date 2025-12-31 \
-  --output-dir data/prices \
-  --manifest data/prices/download_manifest.csv \
-  --unavailable data/prices/unavailable_tickers.csv
+  --output-dir data/prices/sp500 \
+  --manifest data/prices/sp500/download_manifest.csv \
+  --unavailable data/prices/sp500/unavailable_tickers.csv
 
 # Optional smoke test before the full S&P 500 run:
 uv run ablation-study-jepa download-sp500-prices \
   --universe data/universe/sp500_since_1960.csv \
   --lookup-json data/universe/sp500_since_1960.json \
-  --output-dir data/prices \
+  --output-dir data/prices/sp500 \
   --max-tickers 5
 
 uv run ablation-study-jepa download-fred-md \
@@ -44,7 +44,7 @@ uv run ablation-study-jepa run --config configs/exp/jepa_ablation.yaml
 ```
 
 Yahoo Finance files are written one ticker per CSV, for example
-`data/prices/AAPL.csv`, and existing ticker files are skipped unless
+`data/prices/sp500/AAPL.csv`, and existing ticker files are skipped unless
 `--overwrite` is passed. The FRED-MD command stores the raw downloaded vintage
 and a filtered parsed CSV such as `data/macro/fred_md/fred_md_1960_2025.csv`.
 
@@ -64,7 +64,7 @@ the JSON, manifest, and unavailable-ticker CSV after every attempted ticker and
 prints `[index/total]`, elapsed time, remaining downloads, a rolling average
 over the last retrieved tickers, and ETA. Pass `--retry-failed` to retry tickers
 previously marked failed. Yahoo Finance is not a complete delisted-security
-database, so `data/prices/unavailable_tickers.csv` is part of the research
+database, so `data/prices/sp500/unavailable_tickers.csv` is part of the research
 artifact and should be inspected before training.
 
 Run tests with the same `uv` environment:

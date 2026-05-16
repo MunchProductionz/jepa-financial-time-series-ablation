@@ -183,7 +183,7 @@ def build_parser() -> argparse.ArgumentParser:
     sample_parser = subparsers.add_parser(
         "build-sample-data", help="Create a deterministic synthetic OHLCV panel."
     )
-    sample_parser.add_argument("--output", default="data/prices/panel.csv")
+    sample_parser.add_argument("--output", default="data/prices/sp500/panel.csv")
     sample_parser.add_argument("--tickers", default="AAPL,MSFT,NVDA,AMZN")
     sample_parser.add_argument("--start", default="2015-01-01")
     sample_parser.add_argument("--periods", type=int, default=900)
@@ -195,7 +195,7 @@ def build_parser() -> argparse.ArgumentParser:
         help="Download daily Yahoo Finance OHLCV data, one CSV per ticker.",
     )
     yahoo_parser.add_argument("--tickers", default="AAPL,MSFT,NVDA,AMZN")
-    yahoo_parser.add_argument("--output-dir", default="data/prices")
+    yahoo_parser.add_argument("--output-dir", default="data/prices/sp500")
     yahoo_parser.add_argument("--start-date", default="1960-01-01")
     yahoo_parser.add_argument("--end-date", default="2025-12-31")
     yahoo_parser.add_argument("--overwrite", action="store_true")
@@ -232,11 +232,11 @@ def build_parser() -> argparse.ArgumentParser:
         help="Download Yahoo prices for every ticker in an S&P 500 universe CSV.",
     )
     sp500_prices_parser.add_argument("--universe", default="data/universe/sp500_since_1960.csv")
-    sp500_prices_parser.add_argument("--output-dir", default="data/prices")
+    sp500_prices_parser.add_argument("--output-dir", default="data/prices/sp500")
     sp500_prices_parser.add_argument("--start-date", default="1960-01-01")
     sp500_prices_parser.add_argument("--end-date", default="2025-12-31")
     sp500_prices_parser.add_argument("--ticker-column", default="ticker")
-    sp500_prices_parser.add_argument("--manifest", default="data/prices/download_manifest.csv")
+    sp500_prices_parser.add_argument("--manifest", default="data/prices/sp500/download_manifest.csv")
     sp500_prices_parser.add_argument(
         "--lookup-json",
         default="data/universe/sp500_since_1960.json",
@@ -244,7 +244,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     sp500_prices_parser.add_argument(
         "--unavailable",
-        default="data/prices/unavailable_tickers.csv",
+        default="data/prices/sp500/unavailable_tickers.csv",
         help="CSV of source rows and ticker attempts not retrievable from Yahoo.",
     )
     sp500_prices_parser.add_argument(
