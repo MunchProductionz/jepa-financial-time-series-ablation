@@ -12,7 +12,7 @@ uv run ablation-study-jepa download-yahoo-prices \
   --tickers AAPL,MSFT,NVDA,AMZN \
   --start-date 1960-01-01 \
   --end-date 2025-12-31 \
-  --output-dir data/prices/sp500
+  --output-dir data/prices/sp500/data
 
 uv run ablation-study-jepa build-sp500-universe \
   --output data/universe/sp500_since_1960.csv \
@@ -20,18 +20,20 @@ uv run ablation-study-jepa build-sp500-universe \
 
 uv run ablation-study-jepa download-sp500-prices \
   --universe data/universe/sp500_since_1960.csv \
-  --lookup-json data/universe/sp500_since_1960.json \
+  --lookup-json data/prices/sp500/audit/sp500_since_1960.json \
   --start-date 1960-01-01 \
   --end-date 2025-12-31 \
-  --output-dir data/prices/sp500 \
-  --manifest data/prices/sp500/download_manifest.csv \
-  --unavailable data/prices/sp500/unavailable_tickers.csv
+  --output-dir data/prices/sp500/data \
+  --manifest data/prices/sp500/audit/download_manifest.csv \
+  --unavailable data/prices/sp500/audit/unavailable_tickers.csv \
+  --validation-report data/prices/sp500/audit/validation_report.csv \
+  --metadata-validation all
 
 # Optional smoke test before the full S&P 500 run:
 uv run ablation-study-jepa download-sp500-prices \
   --universe data/universe/sp500_since_1960.csv \
-  --lookup-json data/universe/sp500_since_1960.json \
-  --output-dir data/prices/sp500 \
+  --lookup-json data/prices/sp500/audit/sp500_since_1960.json \
+  --output-dir data/prices/sp500/data \
   --max-tickers 5
 
 uv run ablation-study-jepa download-fred-md \
@@ -44,7 +46,7 @@ uv run ablation-study-jepa run --config configs/exp/jepa_ablation.yaml
 ```
 
 Yahoo Finance files are written one ticker per CSV, for example
-`data/prices/sp500/AAPL.csv`, and existing ticker files are skipped unless
+`data/prices/sp500/data/AAPL.csv`, and existing ticker files are skipped unless
 `--overwrite` is passed. The FRED-MD command stores the raw downloaded vintage
 and a filtered parsed CSV such as `data/macro/fred_md/fred_md_1960_2025.csv`.
 
@@ -52,20 +54,28 @@ For the S&P 500 survivorship-bias workflow, `build-sp500-universe` combines the
 WRDS classroom S&P 500 change tables with the current and recent-change tables
 from Wikipedia, then writes a retrieval CSV with membership dates, candidate
 Yahoo tickers, and status notes. It also writes
-`data/universe/sp500_since_1960.json`, a durable lookup keyed by Yahoo ticker
-with `sp500_periods` entries containing `From` and `To` years. `To` is `null`
-for open/current membership intervals, and each period also includes
+`data/universe/sp500_since_1960.json`, a source lookup keyed by Yahoo ticker with
+`sp500_periods` entries containing `From` and `To` years. `To` is `null` for
+open/current membership intervals, and each period also includes
 `active_at_default_end_date`; unknown post-source-cutoff exits are marked as
-`UNKNOWN` in the period status/notes.
+`UNKNOWN` in the period status/notes. The downloader keeps its resumable copy of
+that lookup under `data/prices/sp500/audit/sp500_since_1960.json`.
 
-`download-sp500-prices` reads that JSON to skip tickers already downloaded or
-already marked failed, so the command can be stopped and restarted. It updates
-the JSON, manifest, and unavailable-ticker CSV after every attempted ticker and
+`download-sp500-prices` writes ticker OHLCV files under `data/prices/sp500/data`
+and keeps downloader audit/resume files under `data/prices/sp500/audit`.
+It reads the audit JSON to skip tickers already downloaded or already marked
+failed, so the command can be stopped and restarted. It updates the JSON,
+manifest, and unavailable-ticker CSV after every attempted ticker and
 prints `[index/total]`, elapsed time, remaining downloads, a rolling average
 over the last retrieved tickers, and ETA. Pass `--retry-failed` to retry tickers
-previously marked failed. Yahoo Finance is not a complete delisted-security
-database, so `data/prices/sp500/unavailable_tickers.csv` is part of the research
-artifact and should be inspected before training.
+previously marked failed or invalid. It validates downloaded Yahoo files against
+S&P membership windows and, for suspicious files, Yahoo quote metadata. Rejected
+files are moved to `data/prices/sp500/audit/quarantine`, validation details are
+written to `data/prices/sp500/audit/validation_report.csv`, and invalid tickers
+are also added to `data/prices/sp500/audit/unavailable_tickers.csv`. Yahoo
+Finance volume is raw share volume, not dollar volume or millions of dollars.
+Yahoo Finance is not a complete delisted-security database, so these audit files
+are part of the research artifact and should be inspected before training.
 
 Run tests with the same `uv` environment:
 
