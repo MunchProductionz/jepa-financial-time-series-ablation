@@ -222,5 +222,9 @@ wandb/
 lightning_logs/
 predictions/
 data/prices/*.csv
+data/prices/sp500/data/*.csv
+data/prices/sp500/audit/*.csv
+data/prices/sp500/audit/*.json
+data/prices/sp500/audit/quarantine/*.csv
 data/macro/fred_md/*.csv
 *.ckpt

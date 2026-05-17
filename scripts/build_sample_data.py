@@ -10,7 +10,7 @@ from ablation_study_jepa.data.synthetic import build_sample_panel
 
 def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--output", default="data/prices/panel.csv")
+    parser.add_argument("--output", default="data/prices/sample/panel.csv")
     parser.add_argument("--tickers", default="AAPL,MSFT,NVDA,AMZN")
     parser.add_argument("--start", default="2015-01-01")
     parser.add_argument("--periods", type=int, default=900)
@@ -31,4 +31,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-

@@ -35,10 +35,15 @@ WRDS_SP500_CHANGES_URL = (
 WIKIPEDIA_SP500_URL = "https://en.wikipedia.org/wiki/List_of_S%26P_500_companies"
 DEFAULT_UNIVERSE_PATH = Path("data/universe/sp500_since_1960.csv")
 DEFAULT_UNIVERSE_JSON_PATH = Path("data/universe/sp500_since_1960.json")
-DEFAULT_DOWNLOAD_MANIFEST_PATH = DEFAULT_OUTPUT_DIR / "download_manifest.csv"
-DEFAULT_UNAVAILABLE_TICKERS_PATH = DEFAULT_OUTPUT_DIR / "unavailable_tickers.csv"
+DEFAULT_SP500_PRICE_ROOT = Path("data/prices/sp500")
+DEFAULT_AUDIT_DIR = DEFAULT_SP500_PRICE_ROOT / "audit"
+DEFAULT_DOWNLOAD_LOOKUP_JSON_PATH = DEFAULT_AUDIT_DIR / "sp500_since_1960.json"
+DEFAULT_DOWNLOAD_MANIFEST_PATH = DEFAULT_AUDIT_DIR / "download_manifest.csv"
+DEFAULT_UNAVAILABLE_TICKERS_PATH = DEFAULT_AUDIT_DIR / "unavailable_tickers.csv"
+DEFAULT_VALIDATION_REPORT_PATH = DEFAULT_AUDIT_DIR / "validation_report.csv"
+DEFAULT_QUARANTINE_DIR = DEFAULT_AUDIT_DIR / "quarantine"
 DOWNLOAD_COMPLETE_STATUSES = {"downloaded", "updated", "skipped", "json_skipped"}
-DOWNLOAD_TERMINAL_STATUSES = {*DOWNLOAD_COMPLETE_STATUSES, "failed", "json_failed_skipped"}
+VALID_EQUITY_QUOTE_TYPES = {"EQUITY"}
 
 UNIVERSE_COLUMNS = [
     "ticker",
@@ -309,12 +314,17 @@ def download_sp500_universe_prices(
     progress: bool = False,
     continue_on_error: bool = True,
     manifest_path: str | Path | None = DEFAULT_DOWNLOAD_MANIFEST_PATH,
-    lookup_json_path: str | Path | None = DEFAULT_UNIVERSE_JSON_PATH,
+    lookup_json_path: str | Path | None = DEFAULT_DOWNLOAD_LOOKUP_JSON_PATH,
     unavailable_path: str | Path | None = DEFAULT_UNAVAILABLE_TICKERS_PATH,
+    validation_report_path: str | Path | None = DEFAULT_VALIDATION_REPORT_PATH,
+    quarantine_dir: str | Path | None = DEFAULT_QUARANTINE_DIR,
     max_tickers: int | None = None,
     eta_window: int = 10,
     retry_failed: bool = False,
+    validate_downloads: bool = True,
+    metadata_validation: str = "suspicious",
     progress_printer: Callable[[str], None] | None = None,
+    metadata_fetcher: Callable[[str], dict[str, Any]] | None = None,
 ) -> list[YahooPriceDownloadResult]:
     """Download Yahoo prices for every unique ticker in a universe CSV."""
 
@@ -348,6 +358,15 @@ def download_sp500_universe_prices(
             retry_failed=retry_failed,
         ):
             result = _json_skipped_result(lookup, ticker, output_dir)
+            if validate_downloads:
+                result = _validate_result_and_update_lookup(
+                    lookup=lookup,
+                    result=result,
+                    end_date=end_date,
+                    quarantine_dir=quarantine_dir,
+                    metadata_validation=metadata_validation,
+                    metadata_fetcher=metadata_fetcher,
+                )
             results.append(result)
             _upsert_manifest_result(manifest_records, result)
             _persist_download_state(
@@ -356,6 +375,7 @@ def download_sp500_universe_prices(
                 manifest_records=manifest_records,
                 manifest_path=manifest_path,
                 unavailable_path=unavailable_path,
+                validation_report_path=validation_report_path,
             )
             _print_progress(
                 progress_printer=progress_printer,
@@ -388,10 +408,19 @@ def download_sp500_universe_prices(
         )
         elapsed = time.monotonic() - started_at
         result = ticker_results[0]
-        results.append(result)
         if result.status != "skipped":
             durations.append(elapsed)
         _update_lookup_download_status(lookup, result)
+        if validate_downloads:
+            result = _validate_result_and_update_lookup(
+                lookup=lookup,
+                result=result,
+                end_date=end_date,
+                quarantine_dir=quarantine_dir,
+                metadata_validation=metadata_validation,
+                metadata_fetcher=metadata_fetcher,
+            )
+        results.append(result)
         _upsert_manifest_result(manifest_records, result)
         _persist_download_state(
             lookup=lookup,
@@ -399,6 +428,7 @@ def download_sp500_universe_prices(
             manifest_records=manifest_records,
             manifest_path=manifest_path,
             unavailable_path=unavailable_path,
+            validation_report_path=validation_report_path,
         )
         _print_progress(
             progress_printer=progress_printer,
@@ -434,6 +464,7 @@ def download_sp500_universe_prices(
         manifest_records=manifest_records,
         manifest_path=manifest_path,
         unavailable_path=unavailable_path,
+        validation_report_path=validation_report_path,
     )
     return results
 
@@ -619,6 +650,251 @@ def write_unavailable_tickers(
     return output_path
 
 
+def write_validation_report(
+    lookup: dict[str, Any],
+    output_path: str | Path = DEFAULT_VALIDATION_REPORT_PATH,
+) -> Path:
+    """Write one row per ticker with validation status and reasons."""
+
+    output_path = Path(output_path)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    records = []
+    for ticker, entry in lookup.get("tickers", {}).items():
+        validation = entry.get("validation", {})
+        if not validation:
+            continue
+        records.append(
+            {
+                "ticker": ticker,
+                "status": validation.get("status"),
+                "reasons": "|".join(validation.get("reasons", [])),
+                "warnings": "|".join(validation.get("warnings", [])),
+                "quote_type": validation.get("quote_type"),
+                "yahoo_name": validation.get("yahoo_name"),
+                "exchange": validation.get("exchange"),
+                "currency": validation.get("currency"),
+                "rows": validation.get("rows"),
+                "start_date": validation.get("start_date"),
+                "end_date": validation.get("end_date"),
+                "zero_volume_ratio": validation.get("zero_volume_ratio"),
+                "median_volume": validation.get("median_volume"),
+                "price_overlaps_sp500_period": validation.get("price_overlaps_sp500_period"),
+            }
+        )
+    pd.DataFrame(records).to_csv(output_path, index=False)
+    return output_path
+
+
+def validate_yahoo_price_file(
+    ticker: str,
+    path: str | Path,
+    lookup_entry: dict[str, Any],
+    end_date: str = DEFAULT_END_DATE,
+    metadata_validation: str = "suspicious",
+    metadata_fetcher: Callable[[str], dict[str, Any]] | None = None,
+) -> dict[str, Any]:
+    """Validate that a Yahoo price file plausibly belongs to the intended S&P ticker."""
+
+    stats = _read_price_stats(path)
+    reasons: list[str] = []
+    warnings: list[str] = []
+    metadata: dict[str, Any] = {}
+
+    if stats is None:
+        reasons.append("missing_or_unreadable_price_file")
+        stats = {
+            "rows": 0,
+            "start_date": None,
+            "end_date": None,
+            "zero_volume_ratio": None,
+            "median_volume": None,
+        }
+    else:
+        if stats["rows"] == 0:
+            reasons.append("empty_price_file")
+        if stats["zero_volume_ratio"] == 1.0:
+            reasons.append("all_zero_volume")
+        elif stats["rows"] >= 30 and stats["zero_volume_ratio"] > 0.95:
+            reasons.append("mostly_zero_volume")
+        elif stats["zero_volume_ratio"] > 0.5:
+            warnings.append("high_zero_volume_ratio")
+        if stats["rows"] < 60:
+            warnings.append("short_price_history")
+
+    overlaps = _price_overlaps_any_membership_period(
+        start_date=stats["start_date"],
+        end_date=stats["end_date"],
+        periods=lookup_entry.get("sp500_periods", []),
+        default_end_date=end_date,
+    )
+    if stats["rows"] > 0 and not overlaps:
+        reasons.append("price_dates_do_not_overlap_sp500_membership")
+
+    if _should_fetch_metadata(stats, reasons, warnings, metadata_validation):
+        metadata_fetcher = metadata_fetcher or _fetch_yahoo_quote_metadata
+        try:
+            metadata = metadata_fetcher(ticker) or {}
+        except Exception as exc:
+            warnings.append(f"metadata_fetch_failed:{type(exc).__name__}")
+            metadata = {"metadata_error": str(exc)}
+
+    quote_type = metadata.get("quoteType")
+    yahoo_name = metadata.get("longName") or metadata.get("shortName")
+    if quote_type and quote_type not in VALID_EQUITY_QUOTE_TYPES:
+        reasons.append(f"quote_type_not_equity:{quote_type}")
+    if yahoo_name and not _metadata_matches_companies(yahoo_name, lookup_entry.get("companies", [])):
+        if quote_type in VALID_EQUITY_QUOTE_TYPES or not quote_type:
+            reasons.append("yahoo_name_mismatch")
+        else:
+            warnings.append("yahoo_name_mismatch")
+
+    status = "invalid" if reasons else "warning" if warnings else "valid"
+    return {
+        "status": status,
+        "reasons": _unique_text(reasons),
+        "warnings": _unique_text(warnings),
+        "checked_at_utc": _utc_now(),
+        "quote_type": quote_type,
+        "yahoo_name": yahoo_name,
+        "exchange": metadata.get("exchange"),
+        "currency": metadata.get("currency"),
+        "metadata_error": metadata.get("metadata_error"),
+        "price_overlaps_sp500_period": overlaps,
+        **stats,
+    }
+
+
+def _validate_result_and_update_lookup(
+    lookup: dict[str, Any],
+    result: YahooPriceDownloadResult,
+    end_date: str,
+    quarantine_dir: str | Path | None,
+    metadata_validation: str,
+    metadata_fetcher: Callable[[str], dict[str, Any]] | None,
+) -> YahooPriceDownloadResult:
+    if result.rows <= 0 or result.status in {"failed", "json_failed_skipped", "json_invalid_skipped"}:
+        return result
+    entry = lookup.get("tickers", {}).get(result.ticker)
+    if entry is None:
+        return result
+    validation = validate_yahoo_price_file(
+        ticker=result.ticker,
+        path=result.path,
+        lookup_entry=entry,
+        end_date=end_date,
+        metadata_validation=metadata_validation,
+        metadata_fetcher=metadata_fetcher,
+    )
+    entry["validation"] = validation
+    if validation["status"] != "invalid":
+        return result
+
+    invalid_path = Path(result.path)
+    if quarantine_dir is not None and invalid_path.exists():
+        invalid_path = _quarantine_price_file(invalid_path, quarantine_dir)
+    invalid_result = YahooPriceDownloadResult(
+        ticker=result.ticker,
+        path=invalid_path,
+        rows=result.rows,
+        start_date=result.start_date,
+        end_date=result.end_date,
+        status="invalid",
+        error="; ".join(validation["reasons"]),
+    )
+    _update_lookup_download_status(lookup, invalid_result)
+    entry["validation"] = validation
+    return invalid_result
+
+
+def _read_price_stats(path: str | Path) -> dict[str, Any] | None:
+    try:
+        frame = pd.read_csv(path, usecols=["date", "volume"])
+    except (FileNotFoundError, ValueError, pd.errors.EmptyDataError):
+        return None
+    if frame.empty:
+        return {
+            "rows": 0,
+            "start_date": None,
+            "end_date": None,
+            "zero_volume_ratio": None,
+            "median_volume": None,
+        }
+    dates = pd.to_datetime(frame["date"], errors="coerce").dropna()
+    volume = pd.to_numeric(frame["volume"], errors="coerce").fillna(0)
+    return {
+        "rows": int(len(frame)),
+        "start_date": dates.min().strftime("%Y-%m-%d") if not dates.empty else None,
+        "end_date": dates.max().strftime("%Y-%m-%d") if not dates.empty else None,
+        "zero_volume_ratio": float((volume == 0).mean()) if len(volume) else None,
+        "median_volume": float(volume.median()) if len(volume) else None,
+    }
+
+
+def _price_overlaps_any_membership_period(
+    start_date: str | None,
+    end_date: str | None,
+    periods: list[dict[str, Any]],
+    default_end_date: str,
+) -> bool:
+    if start_date is None or end_date is None:
+        return False
+    price_start = pd.Timestamp(start_date)
+    price_end = pd.Timestamp(end_date)
+    default_end = pd.Timestamp(default_end_date)
+    for period in periods:
+        period_start = pd.to_datetime(period.get("from_date"), errors="coerce")
+        if pd.isna(period_start):
+            continue
+        period_end = pd.to_datetime(period.get("to_date"), errors="coerce")
+        if pd.isna(period_end):
+            period_end = default_end
+        if price_start <= period_end and price_end >= period_start:
+            return True
+    return False
+
+
+def _should_fetch_metadata(
+    stats: dict[str, Any],
+    reasons: list[str],
+    warnings: list[str],
+    metadata_validation: str,
+) -> bool:
+    mode = metadata_validation.lower()
+    if mode == "none":
+        return False
+    if mode == "all":
+        return True
+    return bool(reasons or warnings)
+
+
+def _fetch_yahoo_quote_metadata(ticker: str) -> dict[str, Any]:
+    try:
+        import yfinance as yf
+    except ImportError as exc:
+        raise RuntimeError("yfinance is required for Yahoo metadata validation.") from exc
+    info = yf.Ticker(ticker).get_info()
+    return {
+        "symbol": info.get("symbol"),
+        "quoteType": info.get("quoteType"),
+        "longName": info.get("longName"),
+        "shortName": info.get("shortName"),
+        "exchange": info.get("exchange"),
+        "currency": info.get("currency"),
+    }
+
+
+def _metadata_matches_companies(yahoo_name: str, companies: list[str]) -> bool:
+    return any(_looks_like_same_company(yahoo_name, company) for company in companies)
+
+
+def _quarantine_price_file(path: Path, quarantine_dir: str | Path) -> Path:
+    quarantine_dir = Path(quarantine_dir)
+    quarantine_dir.mkdir(parents=True, exist_ok=True)
+    destination = quarantine_dir / path.name
+    path.replace(destination)
+    return destination
+
+
 def _source_row_without_ticker_record(record: dict[str, Any]) -> dict[str, Any]:
     return {
         "ticker": "",
@@ -698,6 +974,9 @@ def _merge_existing_download_state(lookup: dict[str, Any], existing: dict[str, A
         download = previous.get("download")
         if isinstance(download, dict) and download.get("status"):
             entry["download"] = download
+        validation = previous.get("validation")
+        if isinstance(validation, dict) and validation.get("status"):
+            entry["validation"] = validation
         for key in ["first_year_available", "delisted_or_shutdown_year"]:
             value = previous.get(key)
             if value is not None and not pd.isna(value):
@@ -712,6 +991,8 @@ def _annotate_lookup_with_price_files(
     price_dir = Path(price_dir)
     end = pd.Timestamp(end_date)
     for ticker, entry in lookup["tickers"].items():
+        if entry.get("download", {}).get("status") == "invalid":
+            continue
         path = price_dir / f"{ticker}.csv"
         if not path.exists():
             continue
@@ -751,7 +1032,7 @@ def _lookup_has_terminal_ticker(
 ) -> bool:
     download = lookup.get("tickers", {}).get(ticker, {}).get("download", {})
     status = download.get("status")
-    if status == "failed" and not retry_failed:
+    if status in {"failed", "invalid"} and not retry_failed:
         return True
     if status not in DOWNLOAD_COMPLETE_STATUSES:
         return False
@@ -768,7 +1049,12 @@ def _json_skipped_result(
 ) -> YahooPriceDownloadResult:
     download = lookup["tickers"][ticker].get("download", {})
     previous_status = str(download.get("status") or "")
-    status = "json_failed_skipped" if previous_status == "failed" else "json_skipped"
+    if previous_status == "failed":
+        status = "json_failed_skipped"
+    elif previous_status == "invalid":
+        status = "json_invalid_skipped"
+    else:
+        status = "json_skipped"
     return YahooPriceDownloadResult(
         ticker=ticker,
         path=Path(download.get("path") or output_dir / f"{ticker}.csv"),
@@ -817,9 +1103,21 @@ def _refresh_unavailable_tickers(lookup: dict[str, Any]) -> None:
     records = list(lookup.get("source_rows_without_ticker", []))
     for ticker, entry in lookup.get("tickers", {}).items():
         download = entry.get("download", {})
-        if download.get("status") != "failed":
+        status = download.get("status")
+        if status not in {"failed", "invalid"}:
             continue
+        validation = entry.get("validation", {})
         periods = entry.get("sp500_periods", [])
+        if status == "invalid":
+            reason = "yahoo_validation_failed"
+            yahoo_error = download.get("error") or "; ".join(validation.get("reasons", []))
+        else:
+            reason = (
+                "yahoo_download_failed_current_constituent"
+                if entry.get("is_current_sp500")
+                else "yahoo_download_failed_delisted_or_historical"
+            )
+            yahoo_error = download.get("error")
         records.append(
             {
                 "ticker": ticker,
@@ -827,13 +1125,9 @@ def _refresh_unavailable_tickers(lookup: dict[str, Any]) -> None:
                 "From": _first_period_value(periods, "From"),
                 "To": _last_period_value(periods, "To"),
                 "is_current_sp500": bool(entry.get("is_current_sp500")),
-                "reason": (
-                    "yahoo_download_failed_current_constituent"
-                    if entry.get("is_current_sp500")
-                    else "yahoo_download_failed_delisted_or_historical"
-                ),
-                "download_status": download.get("status"),
-                "yahoo_error": download.get("error"),
+                "reason": reason,
+                "download_status": status,
+                "yahoo_error": yahoo_error,
                 "membership_periods": json.dumps(periods, sort_keys=True),
                 "notes": "; ".join(
                     _unique_text(period.get("notes", "") for period in periods)
@@ -860,8 +1154,11 @@ def _read_lookup_json(path: str | Path) -> dict[str, Any]:
     path = Path(path)
     if not path.exists():
         return {}
-    with path.open("r", encoding="utf-8") as handle:
-        loaded = json.load(handle)
+    try:
+        with path.open("r", encoding="utf-8") as handle:
+            loaded = json.load(handle)
+    except json.JSONDecodeError:
+        return {}
     return loaded if isinstance(loaded, dict) else {}
 
 
@@ -870,9 +1167,11 @@ def _write_lookup_json(lookup: dict[str, Any], path: str | Path) -> Path:
     path.parent.mkdir(parents=True, exist_ok=True)
     lookup["updated_at_utc"] = _utc_now()
     lookup["_path"] = str(path)
-    with path.open("w", encoding="utf-8") as handle:
+    tmp_path = path.with_name(f"{path.name}.tmp")
+    with tmp_path.open("w", encoding="utf-8") as handle:
         json.dump(_without_private_keys(lookup), handle, indent=2, sort_keys=True)
         handle.write("\n")
+    tmp_path.replace(path)
     lookup["_path"] = str(path)
     return path
 
@@ -931,12 +1230,15 @@ def _persist_download_state(
     manifest_records: dict[str, dict[str, Any]],
     manifest_path: str | Path | None,
     unavailable_path: str | Path | None,
+    validation_report_path: str | Path | None,
 ) -> None:
     _refresh_unavailable_tickers(lookup)
     _write_lookup_json(lookup, lookup_path)
     _write_manifest_records(manifest_records, manifest_path)
     if unavailable_path is not None:
         write_unavailable_tickers(lookup, unavailable_path)
+    if validation_report_path is not None:
+        write_validation_report(lookup, validation_report_path)
 
 
 def _remaining_download_count(

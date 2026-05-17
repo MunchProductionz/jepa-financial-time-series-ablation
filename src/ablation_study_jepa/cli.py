@@ -117,9 +117,13 @@ def _download_sp500_prices(args: argparse.Namespace) -> None:
         manifest_path=args.manifest,
         lookup_json_path=args.lookup_json,
         unavailable_path=args.unavailable,
+        validation_report_path=args.validation_report,
+        quarantine_dir=None if args.no_quarantine else args.quarantine_dir,
         max_tickers=args.max_tickers,
         eta_window=args.eta_window,
         retry_failed=args.retry_failed,
+        validate_downloads=not args.no_validate_yahoo,
+        metadata_validation=args.metadata_validation,
         progress_printer=print,
     )
     statuses: dict[str, int] = {}
@@ -129,6 +133,10 @@ def _download_sp500_prices(args: argparse.Namespace) -> None:
     print(f"Processed {len(results):,} tickers: {status_text}")
     if args.manifest:
         print(f"Manifest -> {args.manifest}")
+    if args.validation_report:
+        print(f"Validation report -> {args.validation_report}")
+    if not args.no_quarantine:
+        print(f"Invalid Yahoo files quarantined under -> {args.quarantine_dir}")
 
 
 def _download_fred_md(args: argparse.Namespace) -> None:
@@ -183,7 +191,7 @@ def build_parser() -> argparse.ArgumentParser:
     sample_parser = subparsers.add_parser(
         "build-sample-data", help="Create a deterministic synthetic OHLCV panel."
     )
-    sample_parser.add_argument("--output", default="data/prices/panel.csv")
+    sample_parser.add_argument("--output", default="data/prices/sample/panel.csv")
     sample_parser.add_argument("--tickers", default="AAPL,MSFT,NVDA,AMZN")
     sample_parser.add_argument("--start", default="2015-01-01")
     sample_parser.add_argument("--periods", type=int, default=900)
@@ -195,7 +203,7 @@ def build_parser() -> argparse.ArgumentParser:
         help="Download daily Yahoo Finance OHLCV data, one CSV per ticker.",
     )
     yahoo_parser.add_argument("--tickers", default="AAPL,MSFT,NVDA,AMZN")
-    yahoo_parser.add_argument("--output-dir", default="data/prices")
+    yahoo_parser.add_argument("--output-dir", default="data/prices/sp500/data")
     yahoo_parser.add_argument("--start-date", default="1960-01-01")
     yahoo_parser.add_argument("--end-date", default="2025-12-31")
     yahoo_parser.add_argument("--overwrite", action="store_true")
@@ -232,20 +240,33 @@ def build_parser() -> argparse.ArgumentParser:
         help="Download Yahoo prices for every ticker in an S&P 500 universe CSV.",
     )
     sp500_prices_parser.add_argument("--universe", default="data/universe/sp500_since_1960.csv")
-    sp500_prices_parser.add_argument("--output-dir", default="data/prices")
+    sp500_prices_parser.add_argument("--output-dir", default="data/prices/sp500/data")
     sp500_prices_parser.add_argument("--start-date", default="1960-01-01")
     sp500_prices_parser.add_argument("--end-date", default="2025-12-31")
     sp500_prices_parser.add_argument("--ticker-column", default="ticker")
-    sp500_prices_parser.add_argument("--manifest", default="data/prices/download_manifest.csv")
+    sp500_prices_parser.add_argument(
+        "--manifest",
+        default="data/prices/sp500/audit/download_manifest.csv",
+    )
     sp500_prices_parser.add_argument(
         "--lookup-json",
-        default="data/universe/sp500_since_1960.json",
+        default="data/prices/sp500/audit/sp500_since_1960.json",
         help="Durable ticker lookup/resume state JSON.",
     )
     sp500_prices_parser.add_argument(
         "--unavailable",
-        default="data/prices/unavailable_tickers.csv",
+        default="data/prices/sp500/audit/unavailable_tickers.csv",
         help="CSV of source rows and ticker attempts not retrievable from Yahoo.",
+    )
+    sp500_prices_parser.add_argument(
+        "--validation-report",
+        default="data/prices/sp500/audit/validation_report.csv",
+        help="CSV of Yahoo price validation status, warnings, and rejection reasons.",
+    )
+    sp500_prices_parser.add_argument(
+        "--quarantine-dir",
+        default="data/prices/sp500/audit/quarantine",
+        help="Directory for downloaded files rejected by Yahoo validation.",
     )
     sp500_prices_parser.add_argument(
         "--max-tickers",
@@ -259,7 +280,26 @@ def build_parser() -> argparse.ArgumentParser:
     sp500_prices_parser.add_argument(
         "--retry-failed",
         action="store_true",
-        help="Retry tickers previously marked failed in the lookup JSON.",
+        help="Retry tickers previously marked failed or invalid in the lookup JSON.",
+    )
+    sp500_prices_parser.add_argument(
+        "--no-validate-yahoo",
+        action="store_true",
+        help="Disable post-download Yahoo ticker validation.",
+    )
+    sp500_prices_parser.add_argument(
+        "--no-quarantine",
+        action="store_true",
+        help="Keep invalid Yahoo price files in place instead of moving them to quarantine.",
+    )
+    sp500_prices_parser.add_argument(
+        "--metadata-validation",
+        choices=["suspicious", "all", "none"],
+        default="suspicious",
+        help=(
+            "When to fetch Yahoo quote metadata for validation. "
+            "'suspicious' checks files with local warnings or errors."
+        ),
     )
     sp500_prices_parser.add_argument(
         "--eta-window",
