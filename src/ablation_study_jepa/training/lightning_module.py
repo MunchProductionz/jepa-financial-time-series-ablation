@@ -177,13 +177,11 @@ class ReturnPredictionLightningModule(BaseLightningModule):
         return not config.lejepa.detach_target
 
     def _jepa_warmup_scale(self) -> float:
-        if self.jepa_module is None:
-            return 1.0
-        config = self.jepa_module.config
-        if config.mode != "lejepa":
+        auxiliary_config = self._active_auxiliary_config()
+        if auxiliary_config is None:
             return 1.0
         epoch = int(getattr(self, "current_epoch", 0))
-        return float(config.lejepa.auxiliary.warmup.scale_for_epoch(epoch))
+        return float(auxiliary_config.warmup.scale_for_epoch(epoch))
 
     def _jepa_diagnostic_logs(
         self,
@@ -192,9 +190,9 @@ class ReturnPredictionLightningModule(BaseLightningModule):
         jepa_logs: dict[str, torch.Tensor],
         warmup_scale: float,
     ) -> dict[str, torch.Tensor]:
-        if self.jepa_module is None or self.jepa_module.config.mode != "lejepa":
+        auxiliary_config = self._active_auxiliary_config()
+        if self.jepa_module is None or auxiliary_config is None:
             return {}
-        config = self.jepa_module.config.lejepa.auxiliary
         device = supervised_loss.device
         dtype = supervised_loss.dtype
         logs: dict[str, torch.Tensor] = {
@@ -208,6 +206,8 @@ class ReturnPredictionLightningModule(BaseLightningModule):
         ):
             layer_loss = jepa_logs.get(f"jepa_layer_{layer}_loss")
             if layer_loss is None:
+                layer_loss = jepa_logs.get(f"jepa_loss_layer_{layer}")
+            if layer_loss is None:
                 continue
             effective_weight = float(layer_weight) * float(
                 losses["effective_lambda_jepa"].detach().item()
@@ -216,7 +216,7 @@ class ReturnPredictionLightningModule(BaseLightningModule):
             logs[f"jepa_layer_{layer}_effective_weight"] = effective_weight_tensor
             logs[f"jepa_layer_{layer}_weighted_loss"] = layer_loss.detach() * effective_weight_tensor
 
-        if config.diagnostics.log_aux_loss_ratios:
+        if auxiliary_config.diagnostics.log_aux_loss_ratios:
             denominator = supervised_loss.detach().abs().clamp_min(1e-12)
             logs["jepa_weighted_to_supervised_loss_ratio"] = (
                 losses["weighted_jepa_loss"].detach().abs() / denominator
@@ -228,10 +228,10 @@ class ReturnPredictionLightningModule(BaseLightningModule):
         supervised_loss: torch.Tensor,
         weighted_jepa_loss: torch.Tensor,
     ) -> dict[str, torch.Tensor]:
-        if self.jepa_module is None or self.jepa_module.config.mode != "lejepa":
+        auxiliary_config = self._active_auxiliary_config()
+        if self.jepa_module is None or auxiliary_config is None:
             return {}
-        diagnostics = self.jepa_module.config.lejepa.auxiliary.diagnostics
-        if not diagnostics.log_gradient_norms:
+        if not auxiliary_config.diagnostics.log_gradient_norms:
             return {}
 
         groups = self._transformer_block_parameter_groups()
@@ -250,6 +250,16 @@ class ReturnPredictionLightningModule(BaseLightningModule):
                 auxiliary_norm / supervised_norm.clamp_min(1e-12)
             )
         return logs
+
+    def _active_auxiliary_config(self) -> Any | None:
+        if self.jepa_module is None:
+            return None
+        config = self.jepa_module.config
+        if config.mode == "contrastive":
+            return config.contrastive.auxiliary
+        if config.mode == "lejepa":
+            return config.lejepa.auxiliary
+        return None
 
     def _transformer_block_parameter_groups(self) -> list[tuple[int, list[nn.Parameter]]]:
         transformer_stack = getattr(self.model, "transformer_stack", None)

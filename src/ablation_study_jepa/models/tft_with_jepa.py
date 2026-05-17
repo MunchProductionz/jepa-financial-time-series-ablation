@@ -76,7 +76,7 @@ class TFTWithJEPA(TFT):
         if self._use_local_recompute():
             if context_transformer_input is None:
                 raise RuntimeError("local_recompute JEPA strategy requires transformer_input")
-            gradient_config = self.jepa_module.config.lejepa.auxiliary.gradient_strategy
+            gradient_config = self._active_auxiliary_gradient_config()
             context_hidden_states = self.recompute_transformer_layers(
                 transformer_input=context_transformer_input,
                 hidden_states=context_hidden_states,
@@ -91,10 +91,17 @@ class TFTWithJEPA(TFT):
         )
 
     def _use_local_recompute(self) -> bool:
-        if self.jepa_module is None:
+        gradient_config = self._active_auxiliary_gradient_config()
+        if gradient_config is None:
             return False
+        return gradient_config.name == "local_recompute"
+
+    def _active_auxiliary_gradient_config(self) -> Any | None:
+        if self.jepa_module is None:
+            return None
         config = self.jepa_module.config
-        return (
-            config.mode == "lejepa"
-            and config.lejepa.auxiliary.gradient_strategy.name == "local_recompute"
-        )
+        if config.mode == "contrastive":
+            return config.contrastive.auxiliary.gradient_strategy
+        if config.mode == "lejepa":
+            return config.lejepa.auxiliary.gradient_strategy
+        return None

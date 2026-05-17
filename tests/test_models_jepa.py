@@ -330,6 +330,49 @@ def test_local_recompute_auxiliary_loss_does_not_update_lower_blocks() -> None:
     assert selected_block_grad > 0.0
 
 
+def test_contrastive_local_recompute_auxiliary_loss_does_not_update_lower_blocks() -> None:
+    config = JEPAConfig(
+        enabled=True,
+        mode="contrastive",
+        num_jepa_layers=1,
+        layer_selection_mode="last_L",
+        projection_dim=8,
+        horizons=[1],
+        contrastive={
+            "negative_strategy": "in_batch_all",
+            "auxiliary": {"gradient_strategy": {"name": "local_recompute"}},
+        },
+    )
+    model = TFTWithJEPA(
+        input_dim=5,
+        hidden_dim=16,
+        num_attention_heads=4,
+        num_transformer_blocks=2,
+        dropout=0.0,
+        jepa_config=config,
+    )
+    context_batch = {"x": torch.randn(3, 12, 5)}
+    target_batch = {"x": torch.randn(3, 12, 5)}
+    context_outputs = model(context_batch, return_hidden_states=True)
+    with torch.no_grad():
+        target_outputs = model(target_batch, return_hidden_states=True)
+
+    output = model.compute_jepa_loss(
+        context_hidden_states=context_outputs["hidden_states"],
+        target_hidden_states_by_horizon={1: target_outputs["hidden_states"]},
+        metadata={},
+        context_transformer_input=context_outputs["transformer_input"],
+        attention_mask=context_outputs["attention_mask"],
+    )
+    output["loss"].backward()
+
+    lower_block_grad = _module_grad_norm(model.transformer_stack.blocks[0])
+    selected_block_grad = _module_grad_norm(model.transformer_stack.blocks[1])
+
+    assert lower_block_grad == pytest.approx(0.0)
+    assert selected_block_grad > 0.0
+
+
 def test_global_weighted_auxiliary_loss_updates_lower_blocks() -> None:
     config = JEPAConfig(
         enabled=True,
@@ -381,6 +424,61 @@ def test_gradient_norm_diagnostics_report_transformer_block_ratios() -> None:
         lejepa={
             "detach_target": True,
             "sigreg": {"enabled": False},
+            "auxiliary": {
+                "diagnostics": {"log_gradient_norms": True},
+            },
+        },
+    )
+    model = TFTWithJEPA(
+        input_dim=5,
+        hidden_dim=16,
+        num_attention_heads=4,
+        num_transformer_blocks=2,
+        dropout=0.0,
+        jepa_config=config,
+    )
+    lightning = ReturnPredictionLightningModule(
+        model=model,
+        criterion=torch.nn.MSELoss(),
+        jepa_module=model.jepa_module,
+        lambda_jepa=0.05,
+    )
+    context_batch = {"x": torch.randn(3, 12, 5)}
+    target_batch = {"x": torch.randn(3, 12, 5)}
+    context_outputs = model(context_batch, return_hidden_states=True)
+    supervised_loss = torch.nn.functional.mse_loss(context_outputs["y_pred"], torch.randn(3, 1))
+    with torch.no_grad():
+        target_outputs = model(target_batch, return_hidden_states=True)
+    jepa_output = model.compute_jepa_loss(
+        context_hidden_states=context_outputs["hidden_states"],
+        target_hidden_states_by_horizon={1: target_outputs["hidden_states"]},
+        metadata={},
+        context_transformer_input=context_outputs["transformer_input"],
+        attention_mask=context_outputs["attention_mask"],
+    )
+    losses = lightning.loss_aggregator(supervised_loss, jepa_output["loss"])
+
+    logs = lightning._gradient_norm_logs(
+        supervised_loss=supervised_loss,
+        weighted_jepa_loss=losses["weighted_jepa_loss"],
+    )
+
+    assert "grad_norm_supervised_block_0" in logs
+    assert "grad_norm_aux_block_1" in logs
+    assert "grad_norm_aux_to_supervised_ratio_block_1" in logs
+    assert torch.isfinite(logs["grad_norm_aux_to_supervised_ratio_block_1"])
+
+
+def test_contrastive_gradient_norm_diagnostics_report_transformer_block_ratios() -> None:
+    config = JEPAConfig(
+        enabled=True,
+        mode="contrastive",
+        num_jepa_layers=1,
+        layer_selection_mode="last_L",
+        projection_dim=8,
+        horizons=[1],
+        contrastive={
+            "negative_strategy": "in_batch_all",
             "auxiliary": {
                 "diagnostics": {"log_gradient_norms": True},
             },

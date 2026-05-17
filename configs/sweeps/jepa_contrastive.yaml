@@ -12,7 +12,7 @@ metric:
   goal: minimize
 parameters:
   config:
-    value: configs/exp/jepa_ablation.yaml
+    value: configs/exp/contrastive_jepa_ablation.yaml
   jepa.mode:
     value: contrastive
   jepa.num_jepa_layers:
@@ -26,6 +26,8 @@ parameters:
       - [1]
       - [60]
       - [1, 5, 20, 60]
+  jepa.contrastive.auxiliary.gradient_strategy.name:
+    values: [global_weighted, local_recompute]
   logging.wandb.enabled:
     value: true
   logging.wandb.mode:

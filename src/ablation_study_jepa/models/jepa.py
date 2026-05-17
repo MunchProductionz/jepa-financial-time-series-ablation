@@ -441,6 +441,7 @@ class MultiLayerJEPAModule(nn.Module):
                 logs[f"{prefix}_embedding_norm"] = diagnostics.embedding_norm.detach()
             total = total + float(layer_weight) * layer_total
             logs[f"jepa_loss_layer_{layer}"] = layer_total.detach()
+            logs[f"jepa_layer_{layer}_loss"] = layer_total.detach()
         logs["total_jepa_loss_unweighted"] = total.detach()
         return {"loss": total, "logs": logs}
 

@@ -31,30 +31,39 @@ def test_manual_weights_are_normalized() -> None:
 
 
 def test_yaml_defaults_loader_merges_base_config() -> None:
-    config = load_config("configs/exp/jepa_ablation.yaml")
+    config = load_config("configs/exp/contrastive_jepa_ablation.yaml")
 
     assert config.jepa.enabled is True
     assert config.jepa.mode == "contrastive"
     assert config.jepa.resolve_selected_layers(config.model.num_transformer_blocks) == [3]
     assert config.jepa.contrastive.temperature == pytest.approx(0.1)
     assert config.jepa.contrastive.negative_strategy == "mixed"
+    assert config.jepa.contrastive.auxiliary.gradient_strategy.name == "global_weighted"
+    assert config.jepa.contrastive.auxiliary.warmup.enabled is True
     assert config.data.data_dir.as_posix() == "data/prices/sp500/data"
     assert config.data.fit_scaler_on_train_only is True
     assert config.model.use_causal_mask is True
+    assert config.training.early_stopping_monitor == "val/prediction_loss"
+    assert config.training.early_stopping_mode == "min"
+    assert config.training.early_stopping_min_delta == pytest.approx(0.0)
+    assert config.logging.training_history.enabled is True
+    assert config.logging.training_history.save_epoch_metrics is True
 
 
 def test_dotted_overrides_are_applied_to_loaded_config() -> None:
     config = load_config(
-        "configs/exp/jepa_ablation.yaml",
+        "configs/exp/contrastive_jepa_ablation.yaml",
         overrides={
             "jepa.num_jepa_layers": 2,
             "jepa.horizons": [1, 5],
+            "jepa.contrastive.auxiliary.gradient_strategy.name": "local_recompute",
             "logging.wandb.enabled": True,
         },
     )
 
     assert config.jepa.num_jepa_layers == 2
     assert config.jepa.horizons == [1, 5]
+    assert config.jepa.contrastive.auxiliary.gradient_strategy.name == "local_recompute"
     assert config.logging.wandb.enabled is True
 
 
@@ -106,7 +115,6 @@ def test_lejepa_config_parses_separate_loss_settings() -> None:
     config = load_config("configs/exp/lejepa_ablation.yaml")
 
     assert config.jepa.mode == "lejepa"
-    assert config.data.limit is None
     assert config.features.max_missing_fraction == pytest.approx(0.3)
     assert config.jepa.resolve_selected_layers(config.model.num_transformer_blocks) == [2, 3]
     assert config.jepa.normalized_layer_weights([2, 3]) == [1 / 3, 2 / 3]

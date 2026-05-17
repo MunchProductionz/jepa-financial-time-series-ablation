@@ -17,7 +17,7 @@ data:
     - "S&P div yield"
     - "S&P PE ratio"
   macro_missing: ignore
-  limit: null # null uses all ticker files; integer caps the number of files
+  limit: 10 # null uses all ticker files; integer caps the number of files
   start_date: "2015-01-01" # earliest: "1960-01-01"
   end_date: "2025-12-31" # latest: "2025-12-31"
   trading_day_indexing: true
@@ -191,6 +191,20 @@ jepa:
     same_asset_negative_min_gap: 20
     memory_bank_enabled: false
     memory_bank_size: 4096
+    auxiliary:
+      gradient_strategy:
+        name: global_weighted # values: global_weighted, local_recompute
+        detach_lower_inputs: true
+        compute_target_with_no_grad: true
+      warmup:
+        enabled: false
+        start_epoch: 0
+        end_epoch: 10
+        start_scale: 0.0
+        end_scale: 1.0
+      diagnostics:
+        log_aux_loss_ratios: true
+        log_gradient_norms: false
   lejepa:
     # Conservative TFT Auxiliary Baseline: sigreg.apply_to=context_only
     # Original-Style SIGReg On Both Embedding Sides: sigreg.apply_to=context_and_targets
@@ -231,12 +245,21 @@ training:
   devices: auto # values: auto, integer device count, or device id list
   precision: 32
   early_stopping: true
+  early_stopping_monitor: val/prediction_loss
+  early_stopping_mode: min # values: min, max
   early_stopping_patience: 5
+  early_stopping_min_delta: 0.0
   gradient_clip_val: 1.0
   log_every_n_steps: 10
   seed: 42
 
 logging:
+  training_history:
+    enabled: true
+    save_step_metrics: true
+    save_epoch_metrics: true
+    log_learning_rate: true
+    directory_name: training_history
   wandb:
     enabled: false
     project: ablation-study-jepa

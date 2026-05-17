@@ -99,9 +99,78 @@ class SIGRegApplyTo(str, Enum):
     CONTEXT_AND_TARGETS = "context_and_targets"
 
 
-class LeJEPAGradientStrategy(str, Enum):
+class AuxiliaryGradientStrategy(str, Enum):
     GLOBAL_WEIGHTED = "global_weighted"
     LOCAL_RECOMPUTE = "local_recompute"
+
+
+class JEPACommonAuxiliaryGradientConfig(ExtraForbidModel):
+    name: AuxiliaryGradientStrategy = AuxiliaryGradientStrategy.GLOBAL_WEIGHTED
+    detach_lower_inputs: bool = True
+    compute_target_with_no_grad: bool = True
+
+
+class JEPACommonAuxiliaryWarmupConfig(ExtraForbidModel):
+    enabled: bool = False
+    start_epoch: int = 0
+    end_epoch: int = 0
+    start_scale: float = 0.0
+    end_scale: float = 1.0
+
+    @field_validator("start_epoch", "end_epoch")
+    @classmethod
+    def _nonnegative_epoch(cls, value: int) -> int:
+        if value < 0:
+            raise ValueError("warmup epochs must be non-negative")
+        return value
+
+    @field_validator("start_scale", "end_scale")
+    @classmethod
+    def _nonnegative_scale(cls, value: float) -> float:
+        if value < 0.0:
+            raise ValueError("warmup scales must be non-negative")
+        return value
+
+    @model_validator(mode="after")
+    def _validate_epoch_order(self) -> "JEPACommonAuxiliaryWarmupConfig":
+        if self.end_epoch < self.start_epoch:
+            raise ValueError("warmup.end_epoch must be greater than or equal to start_epoch")
+        return self
+
+    def scale_for_epoch(self, epoch: int) -> float:
+        if not self.enabled:
+            return 1.0
+        if epoch <= self.start_epoch:
+            return self.start_scale
+        if epoch >= self.end_epoch:
+            return self.end_scale
+        span = max(1, self.end_epoch - self.start_epoch)
+        progress = (epoch - self.start_epoch) / span
+        return self.start_scale + progress * (self.end_scale - self.start_scale)
+
+
+class JEPACommonAuxiliaryDiagnosticsConfig(ExtraForbidModel):
+    log_aux_loss_ratios: bool = True
+    log_gradient_norms: bool = False
+
+
+class JEPACommonAuxiliaryConfig(ExtraForbidModel):
+    gradient_strategy: JEPACommonAuxiliaryGradientConfig = Field(
+        default_factory=JEPACommonAuxiliaryGradientConfig
+    )
+    warmup: JEPACommonAuxiliaryWarmupConfig = Field(
+        default_factory=JEPACommonAuxiliaryWarmupConfig
+    )
+    diagnostics: JEPACommonAuxiliaryDiagnosticsConfig = Field(
+        default_factory=JEPACommonAuxiliaryDiagnosticsConfig
+    )
+
+
+LeJEPAGradientStrategy = AuxiliaryGradientStrategy
+LeJEPAAuxiliaryGradientConfig = JEPACommonAuxiliaryGradientConfig
+LeJEPAAuxiliaryWarmupConfig = JEPACommonAuxiliaryWarmupConfig
+LeJEPAAuxiliaryDiagnosticsConfig = JEPACommonAuxiliaryDiagnosticsConfig
+LeJEPAAuxiliaryConfig = JEPACommonAuxiliaryConfig
 
 
 class ContrastiveJEPAConfig(ExtraForbidModel):
@@ -115,6 +184,7 @@ class ContrastiveJEPAConfig(ExtraForbidModel):
     same_asset_negative_min_gap: int = 20
     memory_bank_enabled: bool = False
     memory_bank_size: int = 4096
+    auxiliary: JEPACommonAuxiliaryConfig = Field(default_factory=JEPACommonAuxiliaryConfig)
 
     @field_validator("temperature")
     @classmethod
@@ -182,72 +252,12 @@ class SIGRegConfig(ExtraForbidModel):
         return value
 
 
-class LeJEPAAuxiliaryGradientConfig(ExtraForbidModel):
-    name: LeJEPAGradientStrategy = LeJEPAGradientStrategy.GLOBAL_WEIGHTED
-    detach_lower_inputs: bool = True
-    compute_target_with_no_grad: bool = True
-
-
-class LeJEPAAuxiliaryWarmupConfig(ExtraForbidModel):
-    enabled: bool = False
-    start_epoch: int = 0
-    end_epoch: int = 0
-    start_scale: float = 0.0
-    end_scale: float = 1.0
-
-    @field_validator("start_epoch", "end_epoch")
-    @classmethod
-    def _nonnegative_epoch(cls, value: int) -> int:
-        if value < 0:
-            raise ValueError("warmup epochs must be non-negative")
-        return value
-
-    @field_validator("start_scale", "end_scale")
-    @classmethod
-    def _nonnegative_scale(cls, value: float) -> float:
-        if value < 0.0:
-            raise ValueError("warmup scales must be non-negative")
-        return value
-
-    @model_validator(mode="after")
-    def _validate_epoch_order(self) -> "LeJEPAAuxiliaryWarmupConfig":
-        if self.end_epoch < self.start_epoch:
-            raise ValueError("warmup.end_epoch must be greater than or equal to start_epoch")
-        return self
-
-    def scale_for_epoch(self, epoch: int) -> float:
-        if not self.enabled:
-            return 1.0
-        if epoch <= self.start_epoch:
-            return self.start_scale
-        if epoch >= self.end_epoch:
-            return self.end_scale
-        span = max(1, self.end_epoch - self.start_epoch)
-        progress = (epoch - self.start_epoch) / span
-        return self.start_scale + progress * (self.end_scale - self.start_scale)
-
-
-class LeJEPAAuxiliaryDiagnosticsConfig(ExtraForbidModel):
-    log_aux_loss_ratios: bool = True
-    log_gradient_norms: bool = False
-
-
-class LeJEPAAuxiliaryConfig(ExtraForbidModel):
-    gradient_strategy: LeJEPAAuxiliaryGradientConfig = Field(
-        default_factory=LeJEPAAuxiliaryGradientConfig
-    )
-    warmup: LeJEPAAuxiliaryWarmupConfig = Field(default_factory=LeJEPAAuxiliaryWarmupConfig)
-    diagnostics: LeJEPAAuxiliaryDiagnosticsConfig = Field(
-        default_factory=LeJEPAAuxiliaryDiagnosticsConfig
-    )
-
-
 class LeJEPAConfig(ExtraForbidModel):
     prediction_loss: LeJEPAPredictionLoss = LeJEPAPredictionLoss.MSE
     detach_target: bool = True
     loss_mix: LeJEPALossMixConfig = Field(default_factory=LeJEPALossMixConfig)
     sigreg: SIGRegConfig = Field(default_factory=SIGRegConfig)
-    auxiliary: LeJEPAAuxiliaryConfig = Field(default_factory=LeJEPAAuxiliaryConfig)
+    auxiliary: JEPACommonAuxiliaryConfig = Field(default_factory=JEPACommonAuxiliaryConfig)
 
 
 class JEPAConfig(ExtraForbidModel):
@@ -682,10 +692,27 @@ class TrainingConfig(ExtraForbidModel):
     devices: str | int = "auto"
     precision: str | int = 32
     early_stopping: bool = True
+    early_stopping_monitor: str = "val/prediction_loss"
+    early_stopping_mode: Literal["min", "max"] = "min"
     early_stopping_patience: int = 15
+    early_stopping_min_delta: float = 0.0
     gradient_clip_val: float | None = 1.0
     log_every_n_steps: int = 25
     seed: int = 42
+
+    @field_validator("early_stopping_patience")
+    @classmethod
+    def _nonnegative_patience(cls, value: int) -> int:
+        if value < 0:
+            raise ValueError("early_stopping_patience must be non-negative")
+        return value
+
+    @field_validator("early_stopping_min_delta")
+    @classmethod
+    def _nonnegative_min_delta(cls, value: float) -> float:
+        if value < 0.0:
+            raise ValueError("early_stopping_min_delta must be non-negative")
+        return value
 
 
 class WandbConfig(ExtraForbidModel):
@@ -697,8 +724,24 @@ class WandbConfig(ExtraForbidModel):
     tags: list[str] = Field(default_factory=list)
 
 
+class TrainingHistoryConfig(ExtraForbidModel):
+    enabled: bool = True
+    save_step_metrics: bool = True
+    save_epoch_metrics: bool = True
+    log_learning_rate: bool = True
+    directory_name: str = "training_history"
+
+    @field_validator("directory_name")
+    @classmethod
+    def _valid_directory_name(cls, value: str) -> str:
+        if not value or Path(value).is_absolute() or any(part == ".." for part in Path(value).parts):
+            raise ValueError("training_history.directory_name must be a relative directory name")
+        return value
+
+
 class LoggingConfig(ExtraForbidModel):
     wandb: WandbConfig = Field(default_factory=WandbConfig)
+    training_history: TrainingHistoryConfig = Field(default_factory=TrainingHistoryConfig)
 
 
 class EvaluationConfig(ExtraForbidModel):
