@@ -13,7 +13,7 @@ data:
     - GS5
     - GS10
     - OILPRICEx
-    - "S&P: indust"
+    # - "S&P: indust" # not present in data/macro/fred_md/fred_md_1960_2025.csv
     - "S&P div yield"
     - "S&P PE ratio"
   macro_missing: ignore
@@ -28,11 +28,11 @@ data:
     - "Price Close"
     - "Price Adj_Close"
     - Volume
-    - beta
-    - pe_ratio
-    - debt_to_equity
-    - interest_rate
-    - vix
+    # - beta # not present in raw Yahoo OHLCV files
+    # - pe_ratio # not present in raw Yahoo OHLCV files
+    # - debt_to_equity # not present in raw Yahoo OHLCV files
+    # - interest_rate # use FEDFUNDS from macro slow features instead
+    # - vix # raw macro file has VIXCLSx, not vix
     - return_1d
     - return_5d
     - return_20d
@@ -53,11 +53,11 @@ data:
     - "Price Close"
     - "Price Adj_Close"
     - Volume
-    - beta
-    - pe_ratio
-    - debt_to_equity
-    - interest_rate
-    - vix
+    # - beta # not present in raw Yahoo OHLCV files
+    # - pe_ratio # not present in raw Yahoo OHLCV files
+    # - debt_to_equity # not present in raw Yahoo OHLCV files
+    # - interest_rate # use FEDFUNDS from macro slow features instead
+    # - vix # raw macro file has VIXCLSx, not vix
   slow_feature_columns:
     - "S&P 500"
     - FEDFUNDS
@@ -88,11 +88,11 @@ features:
     - "Price Close"
     - "Price Adj_Close"
     - Volume
-    - beta
-    - pe_ratio
-    - debt_to_equity
-    - interest_rate
-    - vix
+    # - beta # not present in raw Yahoo OHLCV files
+    # - pe_ratio # not present in raw Yahoo OHLCV files
+    # - debt_to_equity # not present in raw Yahoo OHLCV files
+    # - interest_rate # use FEDFUNDS from macro slow features instead
+    # - vix # raw macro file has VIXCLSx, not vix
     - return_1d
     - return_5d
     - return_20d
