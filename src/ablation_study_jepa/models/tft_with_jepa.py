@@ -66,13 +66,35 @@ class TFTWithJEPA(TFT):
         context_hidden_states: list[torch.Tensor],
         target_hidden_states_by_horizon: dict[int, list[torch.Tensor]],
         metadata: dict[str, Any],
+        context_transformer_input: torch.Tensor | None = None,
+        attention_mask: torch.Tensor | None = None,
     ) -> dict[str, torch.Tensor | dict[str, torch.Tensor]]:
         if self.jepa_module is None:
             device = context_hidden_states[-1].device
             zero = torch.zeros((), device=device)
             return {"loss": zero, "logs": {"total_jepa_loss_unweighted": zero}}
+        if self._use_local_recompute():
+            if context_transformer_input is None:
+                raise RuntimeError("local_recompute JEPA strategy requires transformer_input")
+            gradient_config = self.jepa_module.config.lejepa.auxiliary.gradient_strategy
+            context_hidden_states = self.recompute_transformer_layers(
+                transformer_input=context_transformer_input,
+                hidden_states=context_hidden_states,
+                layers=self.jepa_module.selected_layers,
+                mask=attention_mask,
+                detach_lower_inputs=gradient_config.detach_lower_inputs,
+            )
         return self.jepa_module(
             context_hidden_states=context_hidden_states,
             target_hidden_states_by_horizon=target_hidden_states_by_horizon,
             metadata=metadata,
+        )
+
+    def _use_local_recompute(self) -> bool:
+        if self.jepa_module is None:
+            return False
+        config = self.jepa_module.config
+        return (
+            config.mode == "lejepa"
+            and config.lejepa.auxiliary.gradient_strategy.name == "local_recompute"
         )

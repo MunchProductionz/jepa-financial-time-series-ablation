@@ -455,6 +455,11 @@ class MultiLayerJEPAModule(nn.Module):
         total_sigreg = torch.zeros_like(total)
         logs: dict[str, torch.Tensor] = {}
         context_embeddings_for_diagnostics: list[torch.Tensor] = []
+        sigreg_apply_to = SIGRegApplyTo(self.config.lejepa.sigreg.apply_to)
+        sigreg_uses_targets = sigreg_apply_to in {
+            SIGRegApplyTo.TARGETS_ONLY,
+            SIGRegApplyTo.CONTEXT_AND_TARGETS,
+        }
 
         for layer_weight, layer in zip(self.layer_weights, self.selected_layers, strict=True):
             head = self.heads[str(layer)]
@@ -492,14 +497,21 @@ class MultiLayerJEPAModule(nn.Module):
                 context_valid_any = context_valid_any | valid_mask
                 z_context = z_context_all[valid_mask]
                 z_pred = head.predict_from_latent(z_context, horizon)
-                z_target = head.encode_target(
-                    target_state_all[valid_mask],
+                target_state = target_state_all[valid_mask]
+                z_target_prediction = head.encode_target(
+                    target_state,
                     detach=self.config.lejepa.detach_target,
                 )
-                prediction_loss = F.mse_loss(z_pred, z_target)
+                prediction_loss = F.mse_loss(z_pred, z_target_prediction)
+                if sigreg_uses_targets:
+                    target_sigreg_embeddings.append(
+                        head.encode_target(
+                            target_state,
+                            detach=False,
+                        )
+                    )
                 layer_prediction = layer_prediction + float(horizon_weight) * prediction_loss
                 horizon_weight_sum += float(horizon_weight)
-                target_sigreg_embeddings.append(z_target)
                 logs[f"jepa_layer_{layer}_horizon_{horizon}_prediction_loss"] = (
                     prediction_loss.detach()
                 )
@@ -511,6 +523,7 @@ class MultiLayerJEPAModule(nn.Module):
                 z_context_all=z_context_all,
                 context_valid_any=context_valid_any,
                 target_embeddings=target_sigreg_embeddings,
+                apply_to=sigreg_apply_to,
             )
             if self.config.lejepa.sigreg.enabled:
                 lambda_sigreg = self.config.lejepa.loss_mix.lambda_sigreg
@@ -537,12 +550,13 @@ class MultiLayerJEPAModule(nn.Module):
         z_context_all: torch.Tensor,
         context_valid_any: torch.Tensor,
         target_embeddings: list[torch.Tensor],
+        apply_to: SIGRegApplyTo | None = None,
     ) -> torch.Tensor:
         zero = torch.zeros((), device=z_context_all.device, dtype=z_context_all.dtype)
         if not self.config.lejepa.sigreg.enabled:
             return zero
 
-        apply_to = SIGRegApplyTo(self.config.lejepa.sigreg.apply_to)
+        apply_to = apply_to or SIGRegApplyTo(self.config.lejepa.sigreg.apply_to)
         embeddings: list[torch.Tensor] = []
         if apply_to in {SIGRegApplyTo.CONTEXT_ONLY, SIGRegApplyTo.CONTEXT_AND_TARGETS}:
             if bool(context_valid_any.any().item()):
@@ -617,13 +631,22 @@ class LossAggregator(nn.Module):
         self,
         supervised_loss: torch.Tensor,
         jepa_loss: torch.Tensor | None = None,
+        jepa_scale: float = 1.0,
     ) -> dict[str, torch.Tensor]:
         if jepa_loss is None:
             jepa_loss = torch.zeros((), dtype=supervised_loss.dtype, device=supervised_loss.device)
-        total = supervised_loss + self.lambda_jepa * jepa_loss
+        effective_lambda = self.lambda_jepa * float(jepa_scale)
+        weighted_jepa_loss = effective_lambda * jepa_loss
+        total = supervised_loss + weighted_jepa_loss
         return {
             "supervised_loss": supervised_loss,
             "total_jepa_loss": jepa_loss,
+            "weighted_jepa_loss": weighted_jepa_loss,
+            "effective_lambda_jepa": torch.as_tensor(
+                effective_lambda,
+                dtype=supervised_loss.dtype,
+                device=supervised_loss.device,
+            ),
             "total_loss": total,
         }
 

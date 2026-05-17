@@ -5,6 +5,7 @@ from ablation_study_jepa.config.loader import load_config
 from ablation_study_jepa.config.schemas import (
     ExperimentConfig,
     JEPAConfig,
+    LeJEPAAuxiliaryWarmupConfig,
     SlidingWindowConfig,
     SplitsConfig,
     normalize_weights,
@@ -108,9 +109,11 @@ def test_lejepa_config_parses_separate_loss_settings() -> None:
     assert config.features.max_missing_fraction == pytest.approx(0.3)
     assert config.jepa.resolve_selected_layers(config.model.num_transformer_blocks) == [2, 3]
     assert config.jepa.normalized_layer_weights([2, 3]) == [1 / 3, 2 / 3]
-    assert config.jepa.lejepa.detach_target is False
+    assert config.jepa.lejepa.detach_target is True
     assert config.jepa.lejepa.loss_mix.lambda_sigreg == pytest.approx(0.05)
-    assert config.jepa.lejepa.sigreg.apply_to == "context_and_targets"
+    assert config.jepa.lejepa.sigreg.apply_to == "context_only"
+    assert config.jepa.lejepa.auxiliary.gradient_strategy.name == "global_weighted"
+    assert config.jepa.lejepa.auxiliary.warmup.enabled is True
 
 
 def test_lambda_jepa_alias_sets_global_weight() -> None:
@@ -133,6 +136,21 @@ def test_manual_lejepa_layer_selection_and_weights() -> None:
 
     assert selected == [0, 2]
     assert config.normalized_layer_weights(selected) == [0.25, 0.75]
+
+
+def test_lejepa_auxiliary_warmup_interpolates_by_epoch() -> None:
+    warmup = LeJEPAAuxiliaryWarmupConfig(
+        enabled=True,
+        start_epoch=1,
+        end_epoch=5,
+        start_scale=0.2,
+        end_scale=1.0,
+    )
+
+    assert warmup.scale_for_epoch(0) == pytest.approx(0.2)
+    assert warmup.scale_for_epoch(1) == pytest.approx(0.2)
+    assert warmup.scale_for_epoch(3) == pytest.approx(0.6)
+    assert warmup.scale_for_epoch(5) == pytest.approx(1.0)
 
 
 def test_fraction_split_config_requires_fractions_sum_to_one() -> None:

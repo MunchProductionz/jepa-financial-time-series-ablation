@@ -65,6 +65,8 @@ class ReturnPredictionLightningModule(BaseLightningModule):
                     context_hidden_states=outputs["hidden_states"],
                     target_hidden_states_by_horizon=target_hidden_by_horizon,
                     metadata=batch["metadata"],
+                    context_transformer_input=outputs.get("transformer_input"),
+                    attention_mask=outputs.get("attention_mask"),
                 )
             else:
                 jepa_output = self.jepa_module(
@@ -75,13 +77,32 @@ class ReturnPredictionLightningModule(BaseLightningModule):
             jepa_loss = jepa_output["loss"]
             jepa_logs = jepa_output["logs"]
 
-        losses = self.loss_aggregator(supervised_loss, jepa_loss)
+        warmup_scale = self._jepa_warmup_scale()
+        losses = self.loss_aggregator(supervised_loss, jepa_loss, jepa_scale=warmup_scale)
+        jepa_diagnostic_logs = self._jepa_diagnostic_logs(
+            supervised_loss=supervised_loss,
+            losses=losses,
+            jepa_logs=jepa_logs,
+            warmup_scale=warmup_scale,
+        )
+        gradient_logs = self._gradient_norm_logs(
+            supervised_loss=supervised_loss,
+            weighted_jepa_loss=losses["weighted_jepa_loss"],
+        )
         self._log_dict(
             {
                 "train/supervised_loss": losses["supervised_loss"],
                 "train/total_jepa_loss": losses["total_jepa_loss"],
+                "train/weighted_jepa_loss": losses["weighted_jepa_loss"],
                 "train/total_loss": losses["total_loss"],
-                **{f"train/{key}": value for key, value in jepa_logs.items()},
+                **{
+                    f"train/{key}": value
+                    for key, value in {
+                        **jepa_logs,
+                        **jepa_diagnostic_logs,
+                        **gradient_logs,
+                    }.items()
+                },
             },
             batch_size=self._batch_size(batch),
             on_step=True,
@@ -149,7 +170,134 @@ class ReturnPredictionLightningModule(BaseLightningModule):
         if self.jepa_module is None:
             return False
         config = self.jepa_module.config
-        return config.mode == "lejepa" and not config.lejepa.detach_target
+        if config.mode != "lejepa":
+            return False
+        if config.lejepa.auxiliary.gradient_strategy.compute_target_with_no_grad:
+            return False
+        return not config.lejepa.detach_target
+
+    def _jepa_warmup_scale(self) -> float:
+        if self.jepa_module is None:
+            return 1.0
+        config = self.jepa_module.config
+        if config.mode != "lejepa":
+            return 1.0
+        epoch = int(getattr(self, "current_epoch", 0))
+        return float(config.lejepa.auxiliary.warmup.scale_for_epoch(epoch))
+
+    def _jepa_diagnostic_logs(
+        self,
+        supervised_loss: torch.Tensor,
+        losses: dict[str, torch.Tensor],
+        jepa_logs: dict[str, torch.Tensor],
+        warmup_scale: float,
+    ) -> dict[str, torch.Tensor]:
+        if self.jepa_module is None or self.jepa_module.config.mode != "lejepa":
+            return {}
+        config = self.jepa_module.config.lejepa.auxiliary
+        device = supervised_loss.device
+        dtype = supervised_loss.dtype
+        logs: dict[str, torch.Tensor] = {
+            "jepa_warmup_scale": torch.as_tensor(warmup_scale, device=device, dtype=dtype),
+            "jepa_effective_global_weight": losses["effective_lambda_jepa"].detach(),
+        }
+        for layer, layer_weight in zip(
+            self.jepa_module.selected_layers,
+            self.jepa_module.layer_weights,
+            strict=True,
+        ):
+            layer_loss = jepa_logs.get(f"jepa_layer_{layer}_loss")
+            if layer_loss is None:
+                continue
+            effective_weight = float(layer_weight) * float(
+                losses["effective_lambda_jepa"].detach().item()
+            )
+            effective_weight_tensor = torch.as_tensor(effective_weight, device=device, dtype=dtype)
+            logs[f"jepa_layer_{layer}_effective_weight"] = effective_weight_tensor
+            logs[f"jepa_layer_{layer}_weighted_loss"] = layer_loss.detach() * effective_weight_tensor
+
+        if config.diagnostics.log_aux_loss_ratios:
+            denominator = supervised_loss.detach().abs().clamp_min(1e-12)
+            logs["jepa_weighted_to_supervised_loss_ratio"] = (
+                losses["weighted_jepa_loss"].detach().abs() / denominator
+            )
+        return logs
+
+    def _gradient_norm_logs(
+        self,
+        supervised_loss: torch.Tensor,
+        weighted_jepa_loss: torch.Tensor,
+    ) -> dict[str, torch.Tensor]:
+        if self.jepa_module is None or self.jepa_module.config.mode != "lejepa":
+            return {}
+        diagnostics = self.jepa_module.config.lejepa.auxiliary.diagnostics
+        if not diagnostics.log_gradient_norms:
+            return {}
+
+        groups = self._transformer_block_parameter_groups()
+        if not groups:
+            return {}
+        supervised_norms = self._loss_grad_norms_by_group(supervised_loss, groups)
+        auxiliary_norms = self._loss_grad_norms_by_group(weighted_jepa_loss, groups)
+
+        logs: dict[str, torch.Tensor] = {}
+        for layer in supervised_norms:
+            supervised_norm = supervised_norms[layer]
+            auxiliary_norm = auxiliary_norms[layer]
+            logs[f"grad_norm_supervised_block_{layer}"] = supervised_norm
+            logs[f"grad_norm_aux_block_{layer}"] = auxiliary_norm
+            logs[f"grad_norm_aux_to_supervised_ratio_block_{layer}"] = (
+                auxiliary_norm / supervised_norm.clamp_min(1e-12)
+            )
+        return logs
+
+    def _transformer_block_parameter_groups(self) -> list[tuple[int, list[nn.Parameter]]]:
+        transformer_stack = getattr(self.model, "transformer_stack", None)
+        blocks = getattr(transformer_stack, "blocks", None)
+        if blocks is None:
+            return []
+        return [
+            (idx, [param for param in block.parameters() if param.requires_grad])
+            for idx, block in enumerate(blocks)
+        ]
+
+    @staticmethod
+    def _loss_grad_norms_by_group(
+        loss: torch.Tensor,
+        groups: list[tuple[int, list[nn.Parameter]]],
+    ) -> dict[int, torch.Tensor]:
+        zero = torch.zeros((), dtype=loss.dtype, device=loss.device)
+        filtered_groups: list[tuple[int, list[nn.Parameter]]] = [
+            (idx, params) for idx, params in groups if params
+        ]
+        if not filtered_groups or not loss.requires_grad:
+            return {idx: zero for idx, _ in groups}
+
+        flat_params = [param for _, params in filtered_groups for param in params]
+        grads = torch.autograd.grad(
+            loss,
+            flat_params,
+            retain_graph=True,
+            allow_unused=True,
+        )
+
+        norms: dict[int, torch.Tensor] = {}
+        offset = 0
+        for idx, params in filtered_groups:
+            group_grads = grads[offset : offset + len(params)]
+            offset += len(params)
+            squared = [
+                grad.detach().float().square().sum()
+                for grad in group_grads
+                if grad is not None
+            ]
+            if squared:
+                norms[idx] = torch.stack(squared).sum().sqrt().to(dtype=loss.dtype)
+            else:
+                norms[idx] = zero
+        for idx, _ in groups:
+            norms.setdefault(idx, zero)
+        return norms
 
     def _log_dict(self, values: dict[str, torch.Tensor], **kwargs: Any) -> None:
         if pl is not None:
