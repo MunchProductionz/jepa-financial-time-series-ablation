@@ -29,7 +29,7 @@ jepa:
   manual_horizon_weights: null
   lejepa:
     prediction_loss: mse # values: mse
-    detach_target: false
+    detach_target: true
     loss_mix:
       mode: lambda_sigreg # values: lambda_sigreg
       lambda_sigreg: 0.05
