@@ -20,6 +20,7 @@ from ablation_study_jepa.data.sp500_universe import (
     download_sp500_universe_prices,
     ensure_sp500_universe_json,
     ticker_candidates,
+    validate_yahoo_price_file,
     wikipedia_sp500_change_events,
     wrds_sp500_intervals,
 )
@@ -230,6 +231,7 @@ def test_download_sp500_prices_resumes_from_json_and_notes_unavailable(
     price_dir = tmp_path / "prices"
     manifest_path = tmp_path / "manifest.csv"
     unavailable_path = tmp_path / "unavailable.csv"
+    validation_report_path = tmp_path / "validation.csv"
     price_dir.mkdir()
     universe.to_csv(universe_path, index=False)
     (price_dir / "A.csv").write_text(
@@ -261,6 +263,8 @@ def test_download_sp500_prices_resumes_from_json_and_notes_unavailable(
         manifest_path=manifest_path,
         lookup_json_path=lookup_path,
         unavailable_path=unavailable_path,
+        validation_report_path=validation_report_path,
+        metadata_validation="none",
         progress_printer=progress_messages.append,
     )
 
@@ -282,11 +286,138 @@ def test_download_sp500_prices_resumes_from_json_and_notes_unavailable(
         manifest_path=manifest_path,
         lookup_json_path=lookup_path,
         unavailable_path=unavailable_path,
+        validation_report_path=validation_report_path,
+        metadata_validation="none",
         progress_printer=None,
     )
 
     assert calls == []
     assert [result.status for result in resumed] == ["json_skipped", "json_failed_skipped"]
+
+
+def test_validate_yahoo_price_file_rejects_reused_delisted_symbol(tmp_path: Path) -> None:
+    price_path = tmp_path / "POM.csv"
+    price_path.write_text(
+        "ticker,date,open,high,low,close,adj_close,volume\n"
+        "POM,2025-01-02,1,2,0.5,1.5,1.4,1000\n"
+        "POM,2025-01-03,1,2,0.5,1.5,1.4,1000\n"
+    )
+    lookup_entry = {
+        "companies": ["PEPCO HOLDINGS INC"],
+        "sp500_periods": [
+            {
+                "From": 2007,
+                "To": 2016,
+                "from_date": "2007-01-01",
+                "to_date": "2016-03-23",
+            }
+        ],
+    }
+
+    validation = validate_yahoo_price_file(
+        ticker="POM",
+        path=price_path,
+        lookup_entry=lookup_entry,
+        end_date="2025-12-31",
+        metadata_fetcher=lambda ticker: {
+            "quoteType": "EQUITY",
+            "longName": "Pomdoctor Limited",
+            "exchange": "NGM",
+            "currency": "USD",
+        },
+    )
+
+    assert validation["status"] == "invalid"
+    assert "price_dates_do_not_overlap_sp500_membership" in validation["reasons"]
+    assert "yahoo_name_mismatch" in validation["reasons"]
+    assert validation["quote_type"] == "EQUITY"
+
+
+def test_download_sp500_prices_quarantines_invalid_yahoo_symbol(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    universe = pd.DataFrame(
+        [
+            {
+                "ticker": "BAD",
+                "ticker_raw": "BAD",
+                "yahoo_ticker_candidates": "BAD",
+                "company": "Old Index Co",
+                "permno": "",
+                "sp500_start_date": "1960-01-01",
+                "sp500_end_date": "1970-01-01",
+                "first_year_available": "",
+                "entered_sp500_year": 1960,
+                "left_sp500_year": 1970,
+                "delisted_or_shutdown_year": "",
+                "is_current_sp500": False,
+                "membership_status": "closed",
+                "source": "test",
+                "notes": "",
+            }
+        ]
+    )
+    universe_path = tmp_path / "sp500.csv"
+    lookup_path = tmp_path / "sp500.json"
+    price_dir = tmp_path / "prices"
+    manifest_path = tmp_path / "manifest.csv"
+    unavailable_path = tmp_path / "unavailable.csv"
+    validation_report_path = tmp_path / "validation.csv"
+    quarantine_dir = price_dir / "_quarantine"
+    price_dir.mkdir()
+    universe.to_csv(universe_path, index=False)
+
+    def fake_download_yahoo_prices(**kwargs):
+        price_path = Path(kwargs["output_dir"]) / "BAD.csv"
+        price_path.write_text(
+            "ticker,date,open,high,low,close,adj_close,volume\n"
+            "BAD,2025-01-02,1,2,0.5,1.5,1.4,1000\n"
+            "BAD,2025-01-03,1,2,0.5,1.5,1.4,1000\n"
+        )
+        return [
+            yahoo.YahooPriceDownloadResult(
+                ticker="BAD",
+                path=price_path,
+                rows=2,
+                start_date="2025-01-02",
+                end_date="2025-01-03",
+                status="downloaded",
+                error=None,
+            )
+        ]
+
+    monkeypatch.setattr(sp500_universe, "download_yahoo_prices", fake_download_yahoo_prices)
+
+    results = download_sp500_universe_prices(
+        universe_path=universe_path,
+        output_dir=price_dir,
+        manifest_path=manifest_path,
+        lookup_json_path=lookup_path,
+        unavailable_path=unavailable_path,
+        validation_report_path=validation_report_path,
+        quarantine_dir=quarantine_dir,
+        progress_printer=None,
+        metadata_fetcher=lambda ticker: {
+            "quoteType": "EQUITY",
+            "longName": "Unrelated Public Company",
+            "exchange": "NMS",
+            "currency": "USD",
+        },
+    )
+
+    assert [result.status for result in results] == ["invalid"]
+    assert not (price_dir / "BAD.csv").exists()
+    assert (quarantine_dir / "BAD.csv").exists()
+    lookup = json.loads(lookup_path.read_text())
+    assert lookup["tickers"]["BAD"]["download"]["status"] == "invalid"
+    assert lookup["tickers"]["BAD"]["validation"]["status"] == "invalid"
+    unavailable = pd.read_csv(unavailable_path)
+    assert unavailable["ticker"].tolist() == ["BAD"]
+    assert unavailable["reason"].tolist() == ["yahoo_validation_failed"]
+    validation = pd.read_csv(validation_report_path)
+    assert validation["ticker"].tolist() == ["BAD"]
+    assert validation["status"].tolist() == ["invalid"]
 
 
 def test_universe_json_recovers_from_empty_file(tmp_path: Path) -> None:

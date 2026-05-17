@@ -11,7 +11,7 @@ import pandas as pd
 DEFAULT_TICKERS = ("AAPL", "MSFT", "NVDA", "AMZN")
 DEFAULT_START_DATE = "1960-01-01"
 DEFAULT_END_DATE = "2025-12-31"
-DEFAULT_OUTPUT_DIR = Path("data/prices/sp500")
+DEFAULT_OUTPUT_DIR = Path("data/prices/sp500/data")
 
 YAHOO_COLUMN_MAP = {
     "open": "open",

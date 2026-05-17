@@ -15,12 +15,14 @@ from ablation_study_jepa.data.yahoo import (
 SP500_PRICE_DOWNLOAD_COMMAND = """
 uv run ablation-study-jepa download-sp500-prices \
   --universe data/universe/sp500_since_1960.csv \
-  --lookup-json data/universe/sp500_since_1960.json \
+  --lookup-json data/prices/sp500/audit/sp500_since_1960.json \
   --start-date 1960-01-01 \
   --end-date 2025-12-31 \
-  --output-dir data/prices/sp500 \
-  --manifest data/prices/sp500/download_manifest.csv \
-  --unavailable data/prices/sp500/unavailable_tickers.csv
+  --output-dir data/prices/sp500/data \
+  --manifest data/prices/sp500/audit/download_manifest.csv \
+  --unavailable data/prices/sp500/audit/unavailable_tickers.csv \
+  --validation-report data/prices/sp500/audit/validation_report.csv \
+  --metadata-validation all
 """.strip()
 
 

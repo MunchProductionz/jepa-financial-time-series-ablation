@@ -364,7 +364,7 @@ def normalize_weights(
 
 class DataConfig(ExtraForbidModel):
     loader: str = "ablation_study_jepa.data.loaders:load_price_panel"
-    data_dir: Path = Path("data/prices/sp500")
+    data_dir: Path = Path("data/prices/sp500/data")
     macro_data_path: Path | None = Path("data/macro/fred_md/fred_md_1960_2025.csv")
     macro_date_column: str = "date"
     macro_feature_columns: list[str] = Field(

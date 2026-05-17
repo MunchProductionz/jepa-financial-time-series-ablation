@@ -55,8 +55,9 @@ def load_price_panel(
 ) -> pd.DataFrame:
     """Load a price panel and optionally as-of merge monthly macro features.
 
-    Price files can be stored as ``panel.csv`` or one CSV per ticker. Yahoo-style
-    OHLCV columns are renamed to the configured experiment names by default.
+    Price files are expected as one CSV per ticker in the configured data
+    directory. A single ``panel.csv`` remains supported for synthetic samples.
+    Yahoo-style OHLCV columns are renamed to the configured experiment names by default.
     If macro data is provided, monthly values are backward as-of joined onto
     each daily price row by date. The loader intentionally does not infer
     prediction horizons; downstream datasets use row positions within each
@@ -64,31 +65,27 @@ def load_price_panel(
     """
 
     data_dir = Path(data_dir)
+    price_columns = list(price_columns or DEFAULT_PRICE_COLUMNS)
+    price_column_renames = price_column_renames or PRICE_COLUMN_RENAMES
     if data_dir.is_file():
         frame = pd.read_csv(data_dir)
-    elif (data_dir / "panel.csv").exists():
-        frame = pd.read_csv(data_dir / "panel.csv")
     else:
         selected = list(tickers or [])
         if not selected:
-            selected = sorted(path.stem for path in data_dir.glob("*.csv"))
-        frames = []
-        for ticker in selected:
-            path = data_dir / f"{ticker}.csv"
-            if not path.exists():
-                raise FileNotFoundError(f"Missing ticker file: {path}")
-            ticker_frame = pd.read_csv(path)
-            if asset_id_column not in ticker_frame.columns:
-                ticker_frame[asset_id_column] = ticker
-            frames.append(ticker_frame)
-        if not frames:
-            raise FileNotFoundError(f"No CSV data found in {data_dir}")
-        frame = pd.concat(frames, ignore_index=True)
+            selected = sorted(path.stem for path in data_dir.glob("*.csv") if path.name != "panel.csv")
+        if not selected and (data_dir / "panel.csv").exists():
+            frame = pd.read_csv(data_dir / "panel.csv")
+        else:
+            frame = _read_ticker_price_files(
+                data_dir=data_dir,
+                selected=selected,
+                asset_id_column=asset_id_column,
+            )
 
     frame = _normalize_price_columns(
         frame=frame,
-        price_columns=list(price_columns or DEFAULT_PRICE_COLUMNS),
-        price_column_renames=price_column_renames or PRICE_COLUMN_RENAMES,
+        price_columns=price_columns,
+        price_column_renames=price_column_renames,
         date_column=date_column,
         asset_id_column=asset_id_column,
     )
@@ -112,6 +109,25 @@ def load_price_panel(
             missing=macro_missing,
         )
     return frame
+
+
+def _read_ticker_price_files(
+    data_dir: Path,
+    selected: list[str],
+    asset_id_column: str,
+) -> pd.DataFrame:
+    frames = []
+    for ticker in selected:
+        path = data_dir / f"{ticker}.csv"
+        if not path.exists():
+            raise FileNotFoundError(f"Missing ticker file: {path}")
+        ticker_frame = pd.read_csv(path)
+        if asset_id_column not in ticker_frame.columns:
+            ticker_frame[asset_id_column] = ticker
+        frames.append(ticker_frame)
+    if not frames:
+        raise FileNotFoundError(f"No CSV data found in {data_dir}")
+    return pd.concat(frames, ignore_index=True)
 
 
 def _normalize_price_columns(
