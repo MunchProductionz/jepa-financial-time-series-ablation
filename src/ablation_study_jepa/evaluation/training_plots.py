@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from html import escape
 from pathlib import Path
+from typing import Callable
 
 import pandas as pd
 
@@ -28,11 +30,42 @@ COLORS = [
 ]
 
 
+@dataclass(frozen=True)
+class TrainingHistoryPlotSpec:
+    name: str
+    filename: str
+    title: str
+    columns: Callable[[pd.DataFrame], list[str]]
+
+
+def default_training_history_plot_specs(
+    loss_columns: list[str] | None = None,
+    gradient_columns: list[str] | None = None,
+) -> list[TrainingHistoryPlotSpec]:
+    return [
+        TrainingHistoryPlotSpec(
+            name="losses",
+            filename="loss_history.svg",
+            title="Training and Validation Loss",
+            columns=lambda frame: [
+                column for column in (loss_columns or DEFAULT_LOSS_COLUMNS) if column in frame
+            ],
+        ),
+        TrainingHistoryPlotSpec(
+            name="gradients",
+            filename="gradient_history.svg",
+            title="Gradient Diagnostics",
+            columns=lambda frame: _gradient_columns(frame, gradient_columns),
+        ),
+    ]
+
+
 def plot_training_history(
     history_csv: str | Path,
     output_dir: str | Path | None = None,
     loss_columns: list[str] | None = None,
     gradient_columns: list[str] | None = None,
+    plot_specs: list[TrainingHistoryPlotSpec] | None = None,
 ) -> dict[str, Path]:
     """Render available loss and gradient-history columns from a training-history CSV."""
 
@@ -44,26 +77,30 @@ def plot_training_history(
     output_root = Path(output_dir) if output_dir is not None else history_path.parent / "plots"
     output_root.mkdir(parents=True, exist_ok=True)
 
-    losses = [column for column in (loss_columns or DEFAULT_LOSS_COLUMNS) if column in frame]
-    gradients = gradient_columns or [
+    outputs: dict[str, Path] = {}
+    specs = plot_specs or default_training_history_plot_specs(
+        loss_columns=loss_columns,
+        gradient_columns=gradient_columns,
+    )
+    for spec in specs:
+        columns = spec.columns(frame)
+        if not columns:
+            continue
+        path = output_root / spec.filename
+        path.write_text(_line_chart_svg(frame, columns, title=spec.title), "utf-8")
+        outputs[spec.name] = path
+    if not outputs:
+        raise ValueError(f"No loss or gradient columns found in {history_path}")
+    return outputs
+
+
+def _gradient_columns(frame: pd.DataFrame, configured_columns: list[str] | None = None) -> list[str]:
+    columns = configured_columns or [
         column
         for column in frame.columns
         if column.startswith("grad_norm_") or column.startswith("lr-")
     ]
-    gradients = [column for column in gradients if column in frame]
-
-    outputs: dict[str, Path] = {}
-    if losses:
-        path = output_root / "loss_history.svg"
-        path.write_text(_line_chart_svg(frame, losses, title="Training and Validation Loss"), "utf-8")
-        outputs["losses"] = path
-    if gradients:
-        path = output_root / "gradient_history.svg"
-        path.write_text(_line_chart_svg(frame, gradients, title="Gradient Diagnostics"), "utf-8")
-        outputs["gradients"] = path
-    if not outputs:
-        raise ValueError(f"No loss or gradient columns found in {history_path}")
-    return outputs
+    return [column for column in columns if column in frame]
 
 
 def _line_chart_svg(frame: pd.DataFrame, columns: list[str], title: str) -> str:

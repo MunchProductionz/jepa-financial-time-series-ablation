@@ -30,6 +30,7 @@ from ablation_study_jepa.evaluation.predictions import (
     make_prediction_run_dir,
     save_predictions,
 )
+from ablation_study_jepa.evaluation.training_plots import plot_training_history
 from ablation_study_jepa.training.history import (
     combined_history_file_path,
     combine_history_files,
@@ -94,6 +95,7 @@ class ExperimentRunner:
         all_val_predictions: list[pd.DataFrame] = []
         all_test_predictions: list[pd.DataFrame] = []
         training_history_paths: dict[str, Path] = {}
+        training_plot_paths: dict[str, Path] = {}
         for window in window_plan.windows:
             result = self._run_window(
                 window,
@@ -140,6 +142,7 @@ class ExperimentRunner:
         )
         if combined_training_history_path is not None:
             training_history_paths["combined"] = combined_training_history_path
+            training_plot_paths = self._save_training_history_plots(combined_training_history_path)
 
         metrics_path = self._save_metrics(
             val_metrics=val_metrics,
@@ -149,6 +152,7 @@ class ExperimentRunner:
             output_dir=artifact_dir,
             config_path=config_path,
             training_history_paths=training_history_paths,
+            training_plot_paths=training_plot_paths,
         )
         print(
             json.dumps(
@@ -168,6 +172,7 @@ class ExperimentRunner:
             val_predictions=str(prediction_paths.get("val", "")),
             test_predictions=str(prediction_paths.get("test", "")),
             training_history=str(training_history_paths.get("combined", "")),
+            training_plots=str(training_plot_paths),
         )
         _log_final_metrics_to_wandb(
             enabled=self.config.logging.wandb.enabled,
@@ -321,6 +326,7 @@ class ExperimentRunner:
         output_dir: Path,
         config_path: Path | None = None,
         training_history_paths: dict[str, Path] | None = None,
+        training_plot_paths: dict[str, Path] | None = None,
     ) -> Path:
         output_dir.mkdir(parents=True, exist_ok=True)
         path = output_dir / "metrics.json"
@@ -340,6 +346,10 @@ class ExperimentRunner:
                     name: str(path)
                     for name, path in (training_history_paths or {}).items()
                 },
+                "training_plots": {
+                    name: str(path)
+                    for name, path in (training_plot_paths or {}).items()
+                },
             },
         }
         path.write_text(
@@ -347,6 +357,19 @@ class ExperimentRunner:
             encoding="utf-8",
         )
         return path
+
+    def _save_training_history_plots(self, history_path: Path) -> dict[str, Path]:
+        if not self.config.logging.training_history.enabled:
+            return {}
+        try:
+            return plot_training_history(history_path)
+        except ValueError as exc:
+            _log_experiment_progress(
+                "skipping training-history plots",
+                reason=str(exc),
+                history=str(history_path),
+            )
+            return {}
 
     def _save_config(self, config_dict: dict[str, Any], output_dir: Path) -> Path:
         output_dir.mkdir(parents=True, exist_ok=True)

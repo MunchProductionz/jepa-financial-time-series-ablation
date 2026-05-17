@@ -91,6 +91,7 @@ def test_metrics_json_groups_total_and_window_metrics(tmp_path) -> None:
         output_dir=tmp_path,
         config_path=tmp_path / "configs.json",
         training_history_paths={"combined": tmp_path / "training_history" / "combined.csv"},
+        training_plot_paths={"losses": tmp_path / "training_history" / "plots" / "losses.svg"},
     )
 
     payload = json.loads(path.read_text(encoding="utf-8"))
@@ -107,6 +108,9 @@ def test_metrics_json_groups_total_and_window_metrics(tmp_path) -> None:
     }
     assert payload["artifacts"]["training_history"] == {
         "combined": str(tmp_path / "training_history" / "combined.csv")
+    }
+    assert payload["artifacts"]["training_plots"] == {
+        "losses": str(tmp_path / "training_history" / "plots" / "losses.svg")
     }
     assert payload["artifacts"]["config"] == str(tmp_path / "configs.json")
 
@@ -162,3 +166,27 @@ def test_training_history_files_are_combined_for_plotting(tmp_path) -> None:
     assert combined["window_label"].tolist() == ["window_000", "window_001"]
     assert combined["val/prediction_loss"].tolist() == [0.2, 0.1]
     assert output.with_suffix(".json").exists()
+
+
+def test_training_history_plots_are_saved_next_to_combined_history(tmp_path) -> None:
+    runner = ExperimentRunner(
+        ExperimentConfig(
+            splits=SplitsConfig(method="fraction", train=0.7, validation=0.2, test=0.1),
+        )
+    )
+    history_path = tmp_path / "training_history" / "combined_epoch_history.csv"
+    history_path.parent.mkdir(parents=True)
+    pd.DataFrame(
+        {
+            "window_label": ["window_000", "window_000"],
+            "event": ["train_epoch_end", "validation_epoch_end"],
+            "epoch": [0, 0],
+            "train/total_loss": [0.5, 0.5],
+            "val/prediction_loss": [None, 0.4],
+        }
+    ).to_csv(history_path, index=False)
+
+    paths = runner._save_training_history_plots(history_path)
+
+    assert paths["losses"] == tmp_path / "training_history" / "plots" / "loss_history.svg"
+    assert paths["losses"].exists()
