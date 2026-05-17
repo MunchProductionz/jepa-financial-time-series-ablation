@@ -40,7 +40,7 @@ DEFAULT_MACRO_FEATURE_COLUMNS = [
 
 def load_price_panel(
     data_dir: str | Path,
-    tickers: Iterable[str] | None = None,
+    limit: int | None = None,
     start_date: str | None = None,
     end_date: str | None = None,
     date_column: str = "date",
@@ -67,12 +67,22 @@ def load_price_panel(
     data_dir = Path(data_dir)
     price_columns = list(price_columns or DEFAULT_PRICE_COLUMNS)
     price_column_renames = price_column_renames or PRICE_COLUMN_RENAMES
+    if limit is not None and limit <= 0:
+        raise ValueError("limit must be positive when set")
+
     if data_dir.is_file():
         frame = pd.read_csv(data_dir)
     else:
-        selected = list(tickers or [])
-        if not selected:
-            selected = sorted(path.stem for path in data_dir.glob("*.csv") if path.name != "panel.csv")
+        available_files = sorted(path for path in data_dir.glob("*.csv") if path.name != "panel.csv")
+        available_tickers = [path.stem for path in available_files]
+        selected = list(available_tickers)
+        if limit is not None:
+            selected = selected[: min(limit, len(selected))]
+        _print_ticker_file_selection(
+            selected_count=len(selected),
+            available_count=len(available_tickers),
+            limit=limit,
+        )
         if not selected and (data_dir / "panel.csv").exists():
             frame = pd.read_csv(data_dir / "panel.csv")
         else:
@@ -90,8 +100,6 @@ def load_price_panel(
         asset_id_column=asset_id_column,
     )
     frame[date_column] = pd.to_datetime(frame[date_column])
-    if tickers is not None:
-        frame = frame[frame[asset_id_column].isin(list(tickers))]
     if start_date is not None:
         frame = frame[frame[date_column] >= pd.Timestamp(start_date)]
     if end_date is not None:
@@ -109,6 +117,18 @@ def load_price_panel(
             missing=macro_missing,
         )
     return frame
+
+
+def _print_ticker_file_selection(
+    selected_count: int,
+    available_count: int,
+    limit: int | None,
+) -> None:
+    limit_text = "all" if limit is None else str(limit)
+    print(
+        f"[data] using {selected_count} ticker files from {available_count} available "
+        f"(limit={limit_text})"
+    )
 
 
 def _read_ticker_price_files(

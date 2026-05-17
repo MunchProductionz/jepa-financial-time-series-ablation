@@ -17,7 +17,7 @@ data:
     - "S&P div yield"
     - "S&P PE ratio"
   macro_missing: ignore
-  tickers: ["AAPL", "MSFT", "NVDA", "AMZN"]
+  limit: null # null uses all ticker files; integer caps the number of files
   start_date: "2015-01-01" # earliest: "1960-01-01"
   end_date: "2025-12-31" # latest: "2025-12-31"
   trading_day_indexing: true
@@ -223,7 +223,7 @@ jepa:
         log_gradient_norms: false
 
 training:
-  batch_size: 64
+  batch_size: 128
   learning_rate: 0.0003
   weight_decay: 0.00001
   max_epochs: 10

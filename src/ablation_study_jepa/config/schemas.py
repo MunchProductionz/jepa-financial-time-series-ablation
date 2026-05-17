@@ -447,7 +447,7 @@ class DataConfig(ExtraForbidModel):
         ]
     )
     macro_missing: Literal["error", "ignore"] = "ignore"
-    tickers: list[str] | None = None
+    limit: int | None = None
     start_date: str | None = None
     end_date: str | None = None
     train_start: str | None = None
@@ -485,6 +485,13 @@ class DataConfig(ExtraForbidModel):
             "S&P PE ratio",
         ]
     )
+
+    @field_validator("limit")
+    @classmethod
+    def _positive_limit(cls, value: int | None) -> int | None:
+        if value is not None and value <= 0:
+            raise ValueError("data.limit must be positive when set")
+        return value
     fast_feature_columns: list[str] = Field(
         default_factory=lambda: [
             "Price Open",

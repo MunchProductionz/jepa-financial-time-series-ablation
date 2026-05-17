@@ -106,6 +106,7 @@ def test_lejepa_config_parses_separate_loss_settings() -> None:
     config = load_config("configs/exp/lejepa_ablation.yaml")
 
     assert config.jepa.mode == "lejepa"
+    assert config.data.limit is None
     assert config.features.max_missing_fraction == pytest.approx(0.3)
     assert config.jepa.resolve_selected_layers(config.model.num_transformer_blocks) == [2, 3]
     assert config.jepa.normalized_layer_weights([2, 3]) == [1 / 3, 2 / 3]

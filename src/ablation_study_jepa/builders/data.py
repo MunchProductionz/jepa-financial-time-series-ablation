@@ -51,7 +51,7 @@ def build_feature_panel(config: ExperimentConfig) -> PreparedPanel:
     loader = locate(config.data.loader)
     raw = loader(
         data_dir=config.data.data_dir,
-        tickers=config.data.tickers,
+        limit=config.data.limit,
         start_date=config.data.start_date,
         end_date=config.data.end_date,
         date_column=config.data.date_column,
