@@ -2,7 +2,7 @@ defaults:
   - base
   - _self_
 
-run_name: tft_jepa_last1_h1_lambda005
+run_name: tft_contrastive_jepa_last1_h1_lambda005
 
 model:
   target: ablation_study_jepa.models.tft_with_jepa:TFTWithJEPA
