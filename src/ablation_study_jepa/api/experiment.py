@@ -30,6 +30,11 @@ from ablation_study_jepa.evaluation.predictions import (
     make_prediction_run_dir,
     save_predictions,
 )
+from ablation_study_jepa.evaluation.training_plots import plot_training_history
+from ablation_study_jepa.training.history import (
+    combined_history_file_path,
+    combine_history_files,
+)
 from ablation_study_jepa.training.lightning_module import ReturnPredictionLightningModule
 
 
@@ -41,6 +46,7 @@ class ExperimentResult:
     prediction_paths: dict[str, Path]
     metrics_path: Path
     window_metrics: list[dict[str, Any]] = field(default_factory=list)
+    training_history_paths: dict[str, Path] = field(default_factory=dict)
 
 
 def run_experiment(config_path: str | Path) -> ExperimentResult:
@@ -66,6 +72,7 @@ class ExperimentRunner:
             config_dict,
             tags=self.config.logging.wandb.tags,
         )
+        config_path = self._save_config(config_dict=config_dict, output_dir=artifact_dir)
         print(
             json.dumps(
                 {
@@ -87,15 +94,20 @@ class ExperimentRunner:
         window_results: list[dict[str, Any]] = []
         all_val_predictions: list[pd.DataFrame] = []
         all_test_predictions: list[pd.DataFrame] = []
+        training_history_paths: dict[str, Path] = {}
+        training_plot_paths: dict[str, Path] = {}
         for window in window_plan.windows:
             result = self._run_window(
                 window,
                 prepared.feature_panel,
                 total_windows=len(window_plan.windows),
+                artifact_dir=artifact_dir,
             )
             window_results.append(result["metrics"])
             all_val_predictions.append(result["val_predictions"])
             all_test_predictions.append(result["test_predictions"])
+            if result["training_history_path"] is not None:
+                training_history_paths[window.label] = result["training_history_path"]
 
         val_metrics = _average_metric_dicts(
             [result["val"] for result in window_results],
@@ -124,6 +136,13 @@ class ExperimentRunner:
                 artifact_dir,
                 "test",
             )
+        combined_training_history_path = self._save_combined_training_history(
+            output_dir=artifact_dir,
+            history_paths=list(training_history_paths.values()),
+        )
+        if combined_training_history_path is not None:
+            training_history_paths["combined"] = combined_training_history_path
+            training_plot_paths = self._save_training_history_plots(combined_training_history_path)
 
         metrics_path = self._save_metrics(
             val_metrics=val_metrics,
@@ -131,6 +150,9 @@ class ExperimentRunner:
             window_metrics=window_results,
             config_dict=config_dict,
             output_dir=artifact_dir,
+            config_path=config_path,
+            training_history_paths=training_history_paths,
+            training_plot_paths=training_plot_paths,
         )
         print(
             json.dumps(
@@ -149,6 +171,8 @@ class ExperimentRunner:
             metrics_path=str(metrics_path),
             val_predictions=str(prediction_paths.get("val", "")),
             test_predictions=str(prediction_paths.get("test", "")),
+            training_history=str(training_history_paths.get("combined", "")),
+            training_plots=str(training_plot_paths),
         )
         _log_final_metrics_to_wandb(
             enabled=self.config.logging.wandb.enabled,
@@ -162,6 +186,7 @@ class ExperimentRunner:
             prediction_paths=prediction_paths,
             metrics_path=metrics_path,
             window_metrics=window_results,
+            training_history_paths=training_history_paths,
         )
 
     def _run_window(
@@ -169,6 +194,7 @@ class ExperimentRunner:
         window: ExperimentWindow,
         feature_panel: pd.DataFrame,
         total_windows: int,
+        artifact_dir: Path,
     ) -> dict[str, Any]:
         seed_everything(self.config.seed)
         _log_window_progress(
@@ -225,7 +251,11 @@ class ExperimentRunner:
             weight_decay=self.config.training.weight_decay,
             lambda_jepa=self.config.jepa.global_weight,
         )
-        trainer = build_trainer(self.config)
+        trainer = build_trainer(
+            self.config,
+            output_dir=artifact_dir,
+            window_label=window.label,
+        )
         _log_window_progress(
             window,
             total_windows,
@@ -284,6 +314,7 @@ class ExperimentRunner:
             "metrics": metrics,
             "val_predictions": val_predictions,
             "test_predictions": test_predictions,
+            "training_history_path": self._window_training_history_path(artifact_dir, window),
         }
 
     def _save_metrics(
@@ -293,6 +324,9 @@ class ExperimentRunner:
         window_metrics: list[dict[str, Any]],
         config_dict: dict[str, Any],
         output_dir: Path,
+        config_path: Path | None = None,
+        training_history_paths: dict[str, Path] | None = None,
+        training_plot_paths: dict[str, Path] | None = None,
     ) -> Path:
         output_dir.mkdir(parents=True, exist_ok=True)
         path = output_dir / "metrics.json"
@@ -306,12 +340,74 @@ class ExperimentRunner:
                 "windows": _window_metrics_by_index(window_metrics),
             },
             "config": config_dict,
+            "artifacts": {
+                "config": str(config_path) if config_path is not None else None,
+                "training_history": {
+                    name: str(path)
+                    for name, path in (training_history_paths or {}).items()
+                },
+                "training_plots": {
+                    name: str(path)
+                    for name, path in (training_plot_paths or {}).items()
+                },
+            },
         }
         path.write_text(
             json.dumps(payload, indent=2, sort_keys=True, default=str),
             encoding="utf-8",
         )
         return path
+
+    def _save_training_history_plots(self, history_path: Path) -> dict[str, Path]:
+        if not self.config.logging.training_history.enabled:
+            return {}
+        try:
+            return plot_training_history(history_path)
+        except ValueError as exc:
+            _log_experiment_progress(
+                "skipping training-history plots",
+                reason=str(exc),
+                history=str(history_path),
+            )
+            return {}
+
+    def _save_config(self, config_dict: dict[str, Any], output_dir: Path) -> Path:
+        output_dir.mkdir(parents=True, exist_ok=True)
+        path = output_dir / "configs.json"
+        path.write_text(
+            json.dumps(config_dict, indent=2, sort_keys=True, default=str),
+            encoding="utf-8",
+        )
+        return path
+
+    def _save_combined_training_history(
+        self,
+        output_dir: Path,
+        history_paths: list[Path],
+    ) -> Path | None:
+        if not self.config.logging.training_history.enabled:
+            return None
+        if not self.config.logging.training_history.save_epoch_metrics:
+            return None
+        return combine_history_files(
+            history_paths,
+            combined_history_file_path(
+                output_dir,
+                self.config.logging.training_history.directory_name,
+            ),
+        )
+
+    def _window_training_history_path(
+        self,
+        output_dir: Path,
+        window: ExperimentWindow,
+    ) -> Path | None:
+        if not self.config.logging.training_history.enabled:
+            return None
+        if not self.config.logging.training_history.save_epoch_metrics:
+            return None
+        path = output_dir / self.config.logging.training_history.directory_name / f"{window.label}.csv"
+        return path if path.exists() else None
 
 
 def seed_everything(seed: int) -> None:

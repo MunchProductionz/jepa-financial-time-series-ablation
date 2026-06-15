@@ -5,6 +5,7 @@ from ablation_study_jepa.config.loader import load_config
 from ablation_study_jepa.config.schemas import (
     ExperimentConfig,
     JEPAConfig,
+    LeJEPAAuxiliaryWarmupConfig,
     SlidingWindowConfig,
     SplitsConfig,
     normalize_weights,
@@ -30,30 +31,59 @@ def test_manual_weights_are_normalized() -> None:
 
 
 def test_yaml_defaults_loader_merges_base_config() -> None:
-    config = load_config("configs/exp/jepa_ablation.yaml")
+    config = load_config("configs/exp/contrastive_jepa_ablation.yaml")
 
     assert config.jepa.enabled is True
     assert config.jepa.mode == "contrastive"
     assert config.jepa.resolve_selected_layers(config.model.num_transformer_blocks) == [3]
     assert config.jepa.contrastive.temperature == pytest.approx(0.1)
     assert config.jepa.contrastive.negative_strategy == "mixed"
+    assert config.jepa.contrastive.auxiliary.gradient_strategy.name == "global_weighted"
+    assert config.jepa.contrastive.auxiliary.warmup.enabled is True
     assert config.data.data_dir.as_posix() == "data/prices/sp500/data"
     assert config.data.fit_scaler_on_train_only is True
     assert config.model.use_causal_mask is True
+    assert config.training.early_stopping_monitor == "val/prediction_loss"
+    assert config.training.early_stopping_mode == "min"
+    assert config.training.early_stopping_min_delta == pytest.approx(0.0)
+    assert config.logging.training_history.enabled is True
+    assert config.logging.training_history.save_epoch_metrics is True
+
+
+def test_smoke_configs_load() -> None:
+    paths = [
+        "configs/exp/smoke_short_tft.yaml",
+        "configs/exp/smoke_short_contrastive_jepa.yaml",
+        "configs/exp/smoke_short_lejepa.yaml",
+        "configs/exp/smoke_long_tft.yaml",
+        "configs/exp/smoke_long_contrastive_jepa.yaml",
+        "configs/exp/smoke_long_lejepa.yaml",
+    ]
+
+    configs = [load_config(path) for path in paths]
+
+    assert configs[0].jepa.enabled is False
+    assert configs[1].jepa.mode == "contrastive"
+    assert configs[2].jepa.mode == "lejepa"
+    assert configs[3].sliding_window.enabled is True
+    assert configs[4].dataset.lookback == 60
+    assert configs[5].jepa.lejepa.sigreg.apply_to == "context_only"
 
 
 def test_dotted_overrides_are_applied_to_loaded_config() -> None:
     config = load_config(
-        "configs/exp/jepa_ablation.yaml",
+        "configs/exp/contrastive_jepa_ablation.yaml",
         overrides={
             "jepa.num_jepa_layers": 2,
             "jepa.horizons": [1, 5],
+            "jepa.contrastive.auxiliary.gradient_strategy.name": "local_recompute",
             "logging.wandb.enabled": True,
         },
     )
 
     assert config.jepa.num_jepa_layers == 2
     assert config.jepa.horizons == [1, 5]
+    assert config.jepa.contrastive.auxiliary.gradient_strategy.name == "local_recompute"
     assert config.logging.wandb.enabled is True
 
 
@@ -77,7 +107,7 @@ def test_sweep_config_gets_repo_safe_command_and_wandb_defaults() -> None:
     sweep_config = {
         "program": "ablation-study-jepa",
         "method": "grid",
-        "parameters": {"config": {"value": "configs/exp/jepa_ablation.yaml"}},
+        "parameters": {"config": {"value": "configs/exp/contrastive_jepa_ablation.yaml"}},
     }
 
     prepare_sweep_config(sweep_config, project="ablation-study-jepa")
@@ -108,9 +138,11 @@ def test_lejepa_config_parses_separate_loss_settings() -> None:
     assert config.features.max_missing_fraction == pytest.approx(0.3)
     assert config.jepa.resolve_selected_layers(config.model.num_transformer_blocks) == [2, 3]
     assert config.jepa.normalized_layer_weights([2, 3]) == [1 / 3, 2 / 3]
-    assert config.jepa.lejepa.detach_target is False
+    assert config.jepa.lejepa.detach_target is True
     assert config.jepa.lejepa.loss_mix.lambda_sigreg == pytest.approx(0.05)
-    assert config.jepa.lejepa.sigreg.apply_to == "context_and_targets"
+    assert config.jepa.lejepa.sigreg.apply_to == "context_only"
+    assert config.jepa.lejepa.auxiliary.gradient_strategy.name == "global_weighted"
+    assert config.jepa.lejepa.auxiliary.warmup.enabled is True
 
 
 def test_lambda_jepa_alias_sets_global_weight() -> None:
@@ -133,6 +165,21 @@ def test_manual_lejepa_layer_selection_and_weights() -> None:
 
     assert selected == [0, 2]
     assert config.normalized_layer_weights(selected) == [0.25, 0.75]
+
+
+def test_lejepa_auxiliary_warmup_interpolates_by_epoch() -> None:
+    warmup = LeJEPAAuxiliaryWarmupConfig(
+        enabled=True,
+        start_epoch=1,
+        end_epoch=5,
+        start_scale=0.2,
+        end_scale=1.0,
+    )
+
+    assert warmup.scale_for_epoch(0) == pytest.approx(0.2)
+    assert warmup.scale_for_epoch(1) == pytest.approx(0.2)
+    assert warmup.scale_for_epoch(3) == pytest.approx(0.6)
+    assert warmup.scale_for_epoch(5) == pytest.approx(1.0)
 
 
 def test_fraction_split_config_requires_fractions_sum_to_one() -> None:

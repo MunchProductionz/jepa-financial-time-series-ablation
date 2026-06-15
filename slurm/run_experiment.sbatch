@@ -7,6 +7,5 @@
 
 set -euo pipefail
 
-CONFIG=${1:-configs/exp/jepa_ablation.yaml}
+CONFIG=${1:-configs/exp/contrastive_jepa_ablation.yaml}
 uv run ablation-study-jepa run --config "${CONFIG}"
-

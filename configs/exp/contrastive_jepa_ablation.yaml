@@ -2,7 +2,7 @@ defaults:
   - base
   - _self_
 
-run_name: tft_jepa_last1_h1_lambda005
+run_name: tft_contrastive_jepa_last1_h1_lambda005
 
 model:
   target: ablation_study_jepa.models.tft_with_jepa:TFTWithJEPA
@@ -38,6 +38,20 @@ jepa:
     same_asset_negative_min_gap: 20
     memory_bank_enabled: false
     memory_bank_size: 4096
+    auxiliary:
+      gradient_strategy:
+        name: global_weighted # values: global_weighted, local_recompute
+        detach_lower_inputs: true
+        compute_target_with_no_grad: true
+      warmup:
+        enabled: true
+        start_epoch: 0
+        end_epoch: 10
+        start_scale: 0.0
+        end_scale: 1.0
+      diagnostics:
+        log_aux_loss_ratios: true
+        log_gradient_norms: false
 
 logging:
   wandb:

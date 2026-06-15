@@ -123,7 +123,7 @@ class PanelScaler:
             self.center_ = pd.Series(0.0, index=columns)
             self.scale_ = pd.Series(1.0, index=columns)
             return self
-        values = frame[columns].astype(float)
+        values = _numeric_feature_frame(frame, columns)
         if self.method == "standard":
             center = values.mean(axis=0)
             scale = values.std(axis=0, ddof=0)
@@ -139,7 +139,7 @@ class PanelScaler:
         if self.center_ is None or self.scale_ is None:
             raise RuntimeError("PanelScaler must be fitted before transform")
         transformed = frame.copy()
-        transformed[columns] = (transformed[columns].astype(float) - self.center_) / self.scale_
+        transformed[columns] = (_numeric_feature_frame(transformed, columns) - self.center_) / self.scale_
         return transformed
 
     def fit_transform(self, frame: pd.DataFrame, columns: list[str]) -> pd.DataFrame:
@@ -149,3 +149,8 @@ class PanelScaler:
 
 def _ts(value: str | None) -> pd.Timestamp | None:
     return pd.Timestamp(value) if value is not None else None
+
+
+def _numeric_feature_frame(frame: pd.DataFrame, columns: list[str]) -> pd.DataFrame:
+    values = frame[columns].apply(pd.to_numeric, errors="coerce")
+    return values.replace([np.inf, -np.inf], np.nan).astype(float)

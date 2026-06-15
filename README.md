@@ -1,6 +1,6 @@
 # JEPA Financial Time-Series Ablation
 
-Config-driven PyTorch research code for testing whether contrastive JEPA-style auxiliary heads improve stock-return prediction with a TFT-style model.
+Config-driven PyTorch research code for testing whether JEPA-style auxiliary heads improve stock-return prediction with a TFT-style model.
 
 The repo is built for ablations, not production trading. It focuses on clean experiment configuration, chronological stock-panel datasets, causal/as-of representations, detachable JEPA heads, and supervised evaluation metrics.
 
@@ -42,7 +42,7 @@ uv run ablation-study-jepa download-fred-md \
   --end-date 2025-12-31 \
   --output-dir data/macro/fred_md
 
-uv run ablation-study-jepa run --config configs/exp/jepa_ablation.yaml
+uv run ablation-study-jepa run --config configs/exp/contrastive_jepa_ablation.yaml
 ```
 
 Yahoo Finance files are written one ticker per CSV, for example
@@ -83,6 +83,18 @@ Run tests with the same `uv` environment:
 uv run pytest
 ```
 
+Build and run deterministic smoke experiments before a full run:
+
+```bash
+uv run ablation-study-jepa build-sample-data --output data/prices/smoke/short/panel.csv --periods 240 --tickers AAPL,MSFT,NVDA,AMZN
+uv run ablation-study-jepa run --config configs/exp/smoke_short_tft.yaml
+uv run ablation-study-jepa run --config configs/exp/smoke_short_contrastive_jepa.yaml
+uv run ablation-study-jepa run --config configs/exp/smoke_short_lejepa.yaml
+```
+
+See `EXPERIMENT_SETUP.md` for the full ablation matrix, longer smoke configs,
+and the main hyperparameters to vary.
+
 The project is intentionally configured around `uv`; use `.python-version` and
 `pyproject.toml` as the source of truth for the Python version and dependencies.
 
@@ -106,8 +118,8 @@ When JEPA is enabled, selected Transformer block outputs feed auxiliary heads th
 
 1. project context states into a JEPA latent space,
 2. predict future latent states at configurable trading-day horizons,
-3. compare against detached target latents with InfoNCE,
-4. aggregate normalized per-layer and per-horizon losses.
+3. compare against detached target latents with InfoNCE or LeJEPA latent MSE plus SIGReg,
+4. aggregate normalized per-layer and per-horizon losses with configurable auxiliary weighting.
 
 JEPA modules are training-only. Validation, testing, and inference use only the base forecasting path.
 
@@ -136,9 +148,9 @@ src/ablation_study_jepa/
   features/returns.py            return target and feature creation
   models/tft.py                  base TFT model
   models/tft_with_jepa.py        TFT model with embedded JEPA heads
-  models/jepa.py                 JEPA heads, InfoNCE, negative sampler
+  models/jepa.py                 JEPA heads, InfoNCE, LeJEPA/SIGReg losses
   training/                      Lightning module/datamodule/trainer
-  evaluation/                    metrics and prediction exports
+  evaluation/                    metrics, prediction exports, training plots
 tests/                           focused unit tests
 ```
 

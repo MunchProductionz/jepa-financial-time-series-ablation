@@ -14,6 +14,7 @@ from ablation_study_jepa.evaluation.predictions import (
     make_prediction_run_dir,
     save_predictions,
 )
+from ablation_study_jepa.training.history import combine_history_files
 
 
 def test_empty_prediction_frame_keeps_target_columns() -> None:
@@ -88,10 +89,13 @@ def test_metrics_json_groups_total_and_window_metrics(tmp_path) -> None:
         window_metrics=window_metrics,
         config_dict={"seed": 42},
         output_dir=tmp_path,
+        config_path=tmp_path / "configs.json",
+        training_history_paths={"combined": tmp_path / "training_history" / "combined.csv"},
+        training_plot_paths={"losses": tmp_path / "training_history" / "plots" / "losses.svg"},
     )
 
     payload = json.loads(path.read_text(encoding="utf-8"))
-    assert set(payload) == {"config", "metrics", "run_name"}
+    assert set(payload) == {"artifacts", "config", "metrics", "run_name"}
     assert payload["metrics"] == {
         "total": {
             "val": {"mse": 0.2},
@@ -102,6 +106,26 @@ def test_metrics_json_groups_total_and_window_metrics(tmp_path) -> None:
             "1": {"val": {"mse": 0.3}, "test": {"mse": 0.4}},
         },
     }
+    assert payload["artifacts"]["training_history"] == {
+        "combined": str(tmp_path / "training_history" / "combined.csv")
+    }
+    assert payload["artifacts"]["training_plots"] == {
+        "losses": str(tmp_path / "training_history" / "plots" / "losses.svg")
+    }
+    assert payload["artifacts"]["config"] == str(tmp_path / "configs.json")
+
+
+def test_config_json_is_saved_as_separate_run_artifact(tmp_path) -> None:
+    runner = ExperimentRunner(
+        ExperimentConfig(
+            splits=SplitsConfig(method="fraction", train=0.7, validation=0.2, test=0.1),
+        )
+    )
+
+    path = runner._save_config(config_dict={"seed": 42}, output_dir=tmp_path)
+
+    assert path == tmp_path / "configs.json"
+    assert json.loads(path.read_text(encoding="utf-8")) == {"seed": 42}
 
 
 def test_window_metrics_are_keyed_by_window_index() -> None:
@@ -112,3 +136,57 @@ def test_window_metrics_are_keyed_by_window_index() -> None:
     )
 
     assert metrics == {"3": {"val": {"mae": 0.1}, "test": {"mae": 0.2}}}
+
+
+def test_training_history_files_are_combined_for_plotting(tmp_path) -> None:
+    first = tmp_path / "window_000.csv"
+    second = tmp_path / "window_001.csv"
+    output = tmp_path / "combined_epoch_history.csv"
+    pd.DataFrame(
+        {
+            "window_label": ["window_000"],
+            "epoch": [0],
+            "event": ["validation_epoch_end"],
+            "val/prediction_loss": [0.2],
+        }
+    ).to_csv(first, index=False)
+    pd.DataFrame(
+        {
+            "window_label": ["window_001"],
+            "epoch": [0],
+            "event": ["validation_epoch_end"],
+            "val/prediction_loss": [0.1],
+        }
+    ).to_csv(second, index=False)
+
+    path = combine_history_files([first, second], output)
+
+    assert path == output
+    combined = pd.read_csv(output)
+    assert combined["window_label"].tolist() == ["window_000", "window_001"]
+    assert combined["val/prediction_loss"].tolist() == [0.2, 0.1]
+    assert output.with_suffix(".json").exists()
+
+
+def test_training_history_plots_are_saved_next_to_combined_history(tmp_path) -> None:
+    runner = ExperimentRunner(
+        ExperimentConfig(
+            splits=SplitsConfig(method="fraction", train=0.7, validation=0.2, test=0.1),
+        )
+    )
+    history_path = tmp_path / "training_history" / "combined_epoch_history.csv"
+    history_path.parent.mkdir(parents=True)
+    pd.DataFrame(
+        {
+            "window_label": ["window_000", "window_000"],
+            "event": ["train_epoch_end", "validation_epoch_end"],
+            "epoch": [0, 0],
+            "train/total_loss": [0.5, 0.5],
+            "val/prediction_loss": [None, 0.4],
+        }
+    ).to_csv(history_path, index=False)
+
+    paths = runner._save_training_history_plots(history_path)
+
+    assert paths["losses"] == tmp_path / "training_history" / "plots" / "loss_history.svg"
+    assert paths["losses"].exists()

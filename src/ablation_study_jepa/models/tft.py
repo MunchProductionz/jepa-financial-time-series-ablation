@@ -160,6 +160,8 @@ class TransformerBlockStack(nn.Module):
 class TFTOutput:
     y_pred: torch.Tensor
     hidden_states: list[torch.Tensor] | None = None
+    transformer_input: torch.Tensor | None = None
+    attention_mask: torch.Tensor | None = None
     feature_weights: torch.Tensor | None = None
 
 
@@ -268,8 +270,34 @@ class TFT(nn.Module):
         return {
             "y_pred": y_pred,
             "hidden_states": hidden_states if return_hidden_states else None,
+            "transformer_input": encoded if return_hidden_states else None,
+            "attention_mask": mask if return_hidden_states else None,
             "feature_weights": feature_weights,
         }
+
+    def recompute_transformer_layers(
+        self,
+        transformer_input: torch.Tensor,
+        hidden_states: list[torch.Tensor],
+        layers: list[int],
+        mask: torch.Tensor | None = None,
+        detach_lower_inputs: bool = True,
+    ) -> list[torch.Tensor]:
+        """Recompute selected Transformer blocks from detached lower-layer inputs."""
+
+        if len(hidden_states) != len(self.transformer_stack.blocks):
+            raise ValueError("hidden_states length must match the number of Transformer blocks")
+
+        recomputed = list(hidden_states)
+        for layer in layers:
+            if layer < 0 or layer >= len(self.transformer_stack.blocks):
+                raise ValueError(f"Transformer layer index out of range: {layer}")
+            block_input = transformer_input if layer == 0 else hidden_states[layer - 1]
+            if detach_lower_inputs:
+                block_input = block_input.detach()
+            block_output, _ = self.transformer_stack.blocks[layer](block_input, mask=mask)
+            recomputed[layer] = block_output
+        return recomputed
 
 
 def causal_attention_mask(sequence_length: int, device: torch.device) -> torch.Tensor:

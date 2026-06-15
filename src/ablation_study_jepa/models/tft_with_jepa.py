@@ -66,13 +66,42 @@ class TFTWithJEPA(TFT):
         context_hidden_states: list[torch.Tensor],
         target_hidden_states_by_horizon: dict[int, list[torch.Tensor]],
         metadata: dict[str, Any],
+        context_transformer_input: torch.Tensor | None = None,
+        attention_mask: torch.Tensor | None = None,
     ) -> dict[str, torch.Tensor | dict[str, torch.Tensor]]:
         if self.jepa_module is None:
             device = context_hidden_states[-1].device
             zero = torch.zeros((), device=device)
             return {"loss": zero, "logs": {"total_jepa_loss_unweighted": zero}}
+        if self._use_local_recompute():
+            if context_transformer_input is None:
+                raise RuntimeError("local_recompute JEPA strategy requires transformer_input")
+            gradient_config = self._active_auxiliary_gradient_config()
+            context_hidden_states = self.recompute_transformer_layers(
+                transformer_input=context_transformer_input,
+                hidden_states=context_hidden_states,
+                layers=self.jepa_module.selected_layers,
+                mask=attention_mask,
+                detach_lower_inputs=gradient_config.detach_lower_inputs,
+            )
         return self.jepa_module(
             context_hidden_states=context_hidden_states,
             target_hidden_states_by_horizon=target_hidden_states_by_horizon,
             metadata=metadata,
         )
+
+    def _use_local_recompute(self) -> bool:
+        gradient_config = self._active_auxiliary_gradient_config()
+        if gradient_config is None:
+            return False
+        return gradient_config.name == "local_recompute"
+
+    def _active_auxiliary_gradient_config(self) -> Any | None:
+        if self.jepa_module is None:
+            return None
+        config = self.jepa_module.config
+        if config.mode == "contrastive":
+            return config.contrastive.auxiliary.gradient_strategy
+        if config.mode == "lejepa":
+            return config.lejepa.auxiliary.gradient_strategy
+        return None

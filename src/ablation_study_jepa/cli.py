@@ -159,6 +159,17 @@ def _download_fred_md(args: argparse.Namespace) -> None:
         print(f"transformations -> {result.transformations_path}")
 
 
+def _plot_training_history(args: argparse.Namespace) -> None:
+    from ablation_study_jepa.evaluation.training_plots import plot_training_history
+
+    outputs = plot_training_history(
+        history_csv=args.history_csv,
+        output_dir=args.output_dir,
+    )
+    for name, path in outputs.items():
+        print(f"{name}: {path}")
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="ablation-study-jepa")
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -319,6 +330,22 @@ def build_parser() -> argparse.ArgumentParser:
     fred_md_parser.add_argument("--end-date", default="2025-12-31")
     fred_md_parser.add_argument("--overwrite", action="store_true")
     fred_md_parser.set_defaults(func=_download_fred_md)
+
+    plot_history_parser = subparsers.add_parser(
+        "plot-training-history",
+        help="Render loss and gradient SVG plots from a training-history CSV.",
+    )
+    plot_history_parser.add_argument(
+        "--history-csv",
+        required=True,
+        help="Path to combined_epoch_history.csv or a per-window training history CSV.",
+    )
+    plot_history_parser.add_argument(
+        "--output-dir",
+        default=None,
+        help="Directory for SVG plots. Defaults to a plots directory next to the CSV.",
+    )
+    plot_history_parser.set_defaults(func=_plot_training_history)
 
     return parser
 

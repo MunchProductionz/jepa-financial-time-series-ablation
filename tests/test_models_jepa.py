@@ -8,6 +8,7 @@ from ablation_study_jepa.config.schemas import JEPAConfig
 from ablation_study_jepa.models.jepa import MultiLayerJEPAModule, SIGRegLoss
 from ablation_study_jepa.models.tft import TFT
 from ablation_study_jepa.models.tft_with_jepa import TFTWithJEPA
+from ablation_study_jepa.training.lightning_module import ReturnPredictionLightningModule
 
 
 def test_tft_returns_all_transformer_hidden_states() -> None:
@@ -181,6 +182,45 @@ def test_lejepa_can_detach_only_target_latents() -> None:
     assert target_hidden[1].grad is None
 
 
+def test_lejepa_target_sigreg_is_independent_of_prediction_target_detach() -> None:
+    config = JEPAConfig(
+        enabled=True,
+        mode="lejepa",
+        num_jepa_layers=1,
+        layer_selection_mode="last_L",
+        projection_dim=8,
+        horizons=[1],
+        lejepa={
+            "detach_target": True,
+            "loss_mix": {"lambda_sigreg": 1.0},
+            "sigreg": {
+                "enabled": True,
+                "apply_to": "targets_only",
+                "num_slices": 8,
+                "num_t": 5,
+                "t_max": 2.0,
+                "min_batch_size": 2,
+            },
+        },
+    )
+    module = MultiLayerJEPAModule(hidden_dim=12, num_transformer_blocks=2, config=config)
+    context_hidden = [
+        torch.randn(4, 5, 12, requires_grad=True),
+        torch.randn(4, 5, 12, requires_grad=True),
+    ]
+    target_hidden = [
+        torch.randn(4, 5, 12, requires_grad=True),
+        torch.randn(4, 5, 12, requires_grad=True),
+    ]
+
+    output = module(context_hidden, {1: target_hidden}, metadata={})
+    output["loss"].backward()
+
+    assert _tensor_grad_norm(context_hidden[1]) == pytest.approx(0.0)
+    assert target_hidden[1].grad is not None
+    assert _tensor_grad_norm(target_hidden[1]) > 0.0
+
+
 def test_lejepa_horizon_mask_excludes_invalid_pairs() -> None:
     config = JEPAConfig(
         enabled=True,
@@ -244,3 +284,258 @@ def test_lejepa_inference_forward_does_not_require_future_windows() -> None:
 
     assert output["y_pred"].shape == (2, 1)
     assert output["hidden_states"] is None
+
+
+def test_local_recompute_auxiliary_loss_does_not_update_lower_blocks() -> None:
+    config = JEPAConfig(
+        enabled=True,
+        mode="lejepa",
+        num_jepa_layers=1,
+        layer_selection_mode="last_L",
+        projection_dim=8,
+        horizons=[1],
+        lejepa={
+            "detach_target": True,
+            "sigreg": {"enabled": False},
+            "auxiliary": {"gradient_strategy": {"name": "local_recompute"}},
+        },
+    )
+    model = TFTWithJEPA(
+        input_dim=5,
+        hidden_dim=16,
+        num_attention_heads=4,
+        num_transformer_blocks=2,
+        dropout=0.0,
+        jepa_config=config,
+    )
+    context_batch = {"x": torch.randn(3, 12, 5)}
+    target_batch = {"x": torch.randn(3, 12, 5)}
+    context_outputs = model(context_batch, return_hidden_states=True)
+    with torch.no_grad():
+        target_outputs = model(target_batch, return_hidden_states=True)
+
+    output = model.compute_jepa_loss(
+        context_hidden_states=context_outputs["hidden_states"],
+        target_hidden_states_by_horizon={1: target_outputs["hidden_states"]},
+        metadata={},
+        context_transformer_input=context_outputs["transformer_input"],
+        attention_mask=context_outputs["attention_mask"],
+    )
+    output["loss"].backward()
+
+    lower_block_grad = _module_grad_norm(model.transformer_stack.blocks[0])
+    selected_block_grad = _module_grad_norm(model.transformer_stack.blocks[1])
+
+    assert lower_block_grad == pytest.approx(0.0)
+    assert selected_block_grad > 0.0
+
+
+def test_contrastive_local_recompute_auxiliary_loss_does_not_update_lower_blocks() -> None:
+    config = JEPAConfig(
+        enabled=True,
+        mode="contrastive",
+        num_jepa_layers=1,
+        layer_selection_mode="last_L",
+        projection_dim=8,
+        horizons=[1],
+        contrastive={
+            "negative_strategy": "in_batch_all",
+            "auxiliary": {"gradient_strategy": {"name": "local_recompute"}},
+        },
+    )
+    model = TFTWithJEPA(
+        input_dim=5,
+        hidden_dim=16,
+        num_attention_heads=4,
+        num_transformer_blocks=2,
+        dropout=0.0,
+        jepa_config=config,
+    )
+    context_batch = {"x": torch.randn(3, 12, 5)}
+    target_batch = {"x": torch.randn(3, 12, 5)}
+    context_outputs = model(context_batch, return_hidden_states=True)
+    with torch.no_grad():
+        target_outputs = model(target_batch, return_hidden_states=True)
+
+    output = model.compute_jepa_loss(
+        context_hidden_states=context_outputs["hidden_states"],
+        target_hidden_states_by_horizon={1: target_outputs["hidden_states"]},
+        metadata={},
+        context_transformer_input=context_outputs["transformer_input"],
+        attention_mask=context_outputs["attention_mask"],
+    )
+    output["loss"].backward()
+
+    lower_block_grad = _module_grad_norm(model.transformer_stack.blocks[0])
+    selected_block_grad = _module_grad_norm(model.transformer_stack.blocks[1])
+
+    assert lower_block_grad == pytest.approx(0.0)
+    assert selected_block_grad > 0.0
+
+
+def test_global_weighted_auxiliary_loss_updates_lower_blocks() -> None:
+    config = JEPAConfig(
+        enabled=True,
+        mode="lejepa",
+        num_jepa_layers=1,
+        layer_selection_mode="last_L",
+        projection_dim=8,
+        horizons=[1],
+        lejepa={
+            "detach_target": True,
+            "sigreg": {"enabled": False},
+            "auxiliary": {"gradient_strategy": {"name": "global_weighted"}},
+        },
+    )
+    model = TFTWithJEPA(
+        input_dim=5,
+        hidden_dim=16,
+        num_attention_heads=4,
+        num_transformer_blocks=2,
+        dropout=0.0,
+        jepa_config=config,
+    )
+    context_batch = {"x": torch.randn(3, 12, 5)}
+    target_batch = {"x": torch.randn(3, 12, 5)}
+    context_outputs = model(context_batch, return_hidden_states=True)
+    with torch.no_grad():
+        target_outputs = model(target_batch, return_hidden_states=True)
+
+    output = model.compute_jepa_loss(
+        context_hidden_states=context_outputs["hidden_states"],
+        target_hidden_states_by_horizon={1: target_outputs["hidden_states"]},
+        metadata={},
+        context_transformer_input=context_outputs["transformer_input"],
+        attention_mask=context_outputs["attention_mask"],
+    )
+    output["loss"].backward()
+
+    assert _module_grad_norm(model.transformer_stack.blocks[0]) > 0.0
+
+
+def test_gradient_norm_diagnostics_report_transformer_block_ratios() -> None:
+    config = JEPAConfig(
+        enabled=True,
+        mode="lejepa",
+        num_jepa_layers=1,
+        layer_selection_mode="last_L",
+        projection_dim=8,
+        horizons=[1],
+        lejepa={
+            "detach_target": True,
+            "sigreg": {"enabled": False},
+            "auxiliary": {
+                "diagnostics": {"log_gradient_norms": True},
+            },
+        },
+    )
+    model = TFTWithJEPA(
+        input_dim=5,
+        hidden_dim=16,
+        num_attention_heads=4,
+        num_transformer_blocks=2,
+        dropout=0.0,
+        jepa_config=config,
+    )
+    lightning = ReturnPredictionLightningModule(
+        model=model,
+        criterion=torch.nn.MSELoss(),
+        jepa_module=model.jepa_module,
+        lambda_jepa=0.05,
+    )
+    context_batch = {"x": torch.randn(3, 12, 5)}
+    target_batch = {"x": torch.randn(3, 12, 5)}
+    context_outputs = model(context_batch, return_hidden_states=True)
+    supervised_loss = torch.nn.functional.mse_loss(context_outputs["y_pred"], torch.randn(3, 1))
+    with torch.no_grad():
+        target_outputs = model(target_batch, return_hidden_states=True)
+    jepa_output = model.compute_jepa_loss(
+        context_hidden_states=context_outputs["hidden_states"],
+        target_hidden_states_by_horizon={1: target_outputs["hidden_states"]},
+        metadata={},
+        context_transformer_input=context_outputs["transformer_input"],
+        attention_mask=context_outputs["attention_mask"],
+    )
+    losses = lightning.loss_aggregator(supervised_loss, jepa_output["loss"])
+
+    logs = lightning._gradient_norm_logs(
+        supervised_loss=supervised_loss,
+        weighted_jepa_loss=losses["weighted_jepa_loss"],
+    )
+
+    assert "grad_norm_supervised_block_0" in logs
+    assert "grad_norm_aux_block_1" in logs
+    assert "grad_norm_aux_to_supervised_ratio_block_1" in logs
+    assert torch.isfinite(logs["grad_norm_aux_to_supervised_ratio_block_1"])
+
+
+def test_contrastive_gradient_norm_diagnostics_report_transformer_block_ratios() -> None:
+    config = JEPAConfig(
+        enabled=True,
+        mode="contrastive",
+        num_jepa_layers=1,
+        layer_selection_mode="last_L",
+        projection_dim=8,
+        horizons=[1],
+        contrastive={
+            "negative_strategy": "in_batch_all",
+            "auxiliary": {
+                "diagnostics": {"log_gradient_norms": True},
+            },
+        },
+    )
+    model = TFTWithJEPA(
+        input_dim=5,
+        hidden_dim=16,
+        num_attention_heads=4,
+        num_transformer_blocks=2,
+        dropout=0.0,
+        jepa_config=config,
+    )
+    lightning = ReturnPredictionLightningModule(
+        model=model,
+        criterion=torch.nn.MSELoss(),
+        jepa_module=model.jepa_module,
+        lambda_jepa=0.05,
+    )
+    context_batch = {"x": torch.randn(3, 12, 5)}
+    target_batch = {"x": torch.randn(3, 12, 5)}
+    context_outputs = model(context_batch, return_hidden_states=True)
+    supervised_loss = torch.nn.functional.mse_loss(context_outputs["y_pred"], torch.randn(3, 1))
+    with torch.no_grad():
+        target_outputs = model(target_batch, return_hidden_states=True)
+    jepa_output = model.compute_jepa_loss(
+        context_hidden_states=context_outputs["hidden_states"],
+        target_hidden_states_by_horizon={1: target_outputs["hidden_states"]},
+        metadata={},
+        context_transformer_input=context_outputs["transformer_input"],
+        attention_mask=context_outputs["attention_mask"],
+    )
+    losses = lightning.loss_aggregator(supervised_loss, jepa_output["loss"])
+
+    logs = lightning._gradient_norm_logs(
+        supervised_loss=supervised_loss,
+        weighted_jepa_loss=losses["weighted_jepa_loss"],
+    )
+
+    assert "grad_norm_supervised_block_0" in logs
+    assert "grad_norm_aux_block_1" in logs
+    assert "grad_norm_aux_to_supervised_ratio_block_1" in logs
+    assert torch.isfinite(logs["grad_norm_aux_to_supervised_ratio_block_1"])
+
+
+def _module_grad_norm(module: torch.nn.Module) -> float:
+    squared = [
+        param.grad.detach().float().square().sum()
+        for param in module.parameters()
+        if param.grad is not None
+    ]
+    if not squared:
+        return 0.0
+    return float(torch.stack(squared).sum().sqrt().item())
+
+
+def _tensor_grad_norm(tensor: torch.Tensor) -> float:
+    if tensor.grad is None:
+        return 0.0
+    return float(tensor.grad.detach().float().square().sum().sqrt().item())

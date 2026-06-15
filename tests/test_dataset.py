@@ -32,6 +32,33 @@ def test_forward_log_return_uses_trading_day_rows_not_calendar_days() -> None:
     assert featured.loc[1, "target_return"] == pytest.approx(0.09531018)
 
 
+def test_constant_volume_zscore_is_numeric_and_neutral() -> None:
+    frame = pd.DataFrame(
+        {
+            "ticker": ["A"] * 8,
+            "date": pd.bdate_range("2024-01-01", periods=8),
+            "close": [100.0, 101.0, 102.0, 103.0, 104.0, 105.0, 106.0, 107.0],
+            "volume": [1000] * 8,
+        }
+    )
+
+    featured = add_return_features(frame, target_horizon=1)
+
+    assert featured["volume_zscore"].dtype.kind == "f"
+    assert featured["volume_zscore"].isna().sum() == 0
+    assert featured["volume_zscore"].eq(0.0).all()
+
+
+def test_panel_scaler_handles_nullable_missing_values() -> None:
+    frame = pd.DataFrame({"feature": pd.Series([1.0, pd.NA, 3.0], dtype="Float64")})
+
+    scaler = PanelScaler("standard").fit(frame, ["feature"])
+    transformed = scaler.transform(frame, ["feature"])
+
+    assert transformed["feature"].dtype.kind == "f"
+    assert transformed["feature"].isna().sum() == 1
+
+
 def test_window_dataset_excludes_train_targets_beyond_split_end() -> None:
     panel = build_sample_panel(tickers=["AAPL", "MSFT"], periods=140)
     panel = add_return_features(panel, target_horizon=5)

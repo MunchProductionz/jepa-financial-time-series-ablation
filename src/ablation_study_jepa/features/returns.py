@@ -39,7 +39,8 @@ def add_return_features(
     if volume_column in result.columns:
         rolling_mean = grouped[volume_column].transform(lambda s: s.rolling(20, min_periods=5).mean())
         rolling_std = grouped[volume_column].transform(lambda s: s.rolling(20, min_periods=5).std())
-        result["volume_zscore"] = (result[volume_column] - rolling_mean) / rolling_std.replace(0, pd.NA)
+        zscore = (result[volume_column] - rolling_mean) / rolling_std.replace(0.0, np.nan)
+        result["volume_zscore"] = zscore.replace([np.inf, -np.inf], np.nan).fillna(0.0)
     elif "volume_zscore" not in result.columns:
         result["volume_zscore"] = 0.0
 

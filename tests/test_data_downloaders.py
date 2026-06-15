@@ -64,6 +64,50 @@ def test_normalize_yahoo_price_frame_uses_panel_schema() -> None:
     assert panel["date"].tolist() == ["2025-01-02", "2025-01-03"]
 
 
+def test_load_price_panel_limit_uses_all_files_when_null(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    _write_price_file(tmp_path, "AAA")
+    _write_price_file(tmp_path, "BBB")
+    _write_price_file(tmp_path, "CCC")
+
+    panel = load_price_panel(tmp_path, limit=None)
+    captured = capsys.readouterr()
+
+    assert panel["ticker"].nunique() == 3
+    assert "[data] using 3 ticker files from 3 available (limit=all)" in captured.out
+
+
+def test_load_price_panel_limit_caps_selected_files(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    _write_price_file(tmp_path, "AAA")
+    _write_price_file(tmp_path, "BBB")
+    _write_price_file(tmp_path, "CCC")
+
+    panel = load_price_panel(tmp_path, limit=2)
+    captured = capsys.readouterr()
+
+    assert panel["ticker"].unique().tolist() == ["AAA", "BBB"]
+    assert "[data] using 2 ticker files from 3 available (limit=2)" in captured.out
+
+
+def test_load_price_panel_limit_above_file_count_uses_available_count(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    _write_price_file(tmp_path, "AAA")
+    _write_price_file(tmp_path, "BBB")
+
+    panel = load_price_panel(tmp_path, limit=10)
+    captured = capsys.readouterr()
+
+    assert panel["ticker"].nunique() == 2
+    assert "[data] using 2 ticker files from 2 available (limit=10)" in captured.out
+
+
 def test_download_yahoo_prices_can_continue_after_empty_response(
     tmp_path: Path,
     monkeypatch,
@@ -84,6 +128,22 @@ def test_download_yahoo_prices_can_continue_after_empty_response(
     assert results[0].status == "failed"
     assert results[0].ticker == "MISSING"
     assert "No price data returned" in str(results[0].error)
+
+
+def _write_price_file(path: Path, ticker: str) -> None:
+    frame = pd.DataFrame(
+        {
+            "ticker": [ticker, ticker],
+            "date": ["2025-01-02", "2025-01-03"],
+            "open": [100.0, 101.0],
+            "high": [102.0, 103.0],
+            "low": [99.0, 100.0],
+            "close": [101.0, 102.0],
+            "adj_close": [100.5, 101.5],
+            "volume": [1_000, 2_000],
+        }
+    )
+    frame.to_csv(path / f"{ticker}.csv", index=False)
 
 
 def test_wrds_sp500_intervals_parse_membership_rows() -> None:
@@ -498,7 +558,6 @@ def test_price_loader_renames_prices_and_asof_merges_macro(tmp_path: Path) -> No
 
     panel = load_price_panel(
         price_dir,
-        tickers=["AAPL"],
         macro_data_path=macro_path,
         macro_feature_columns=[
             "S&P 500",
