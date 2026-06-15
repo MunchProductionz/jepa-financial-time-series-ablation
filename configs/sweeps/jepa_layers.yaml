@@ -12,7 +12,7 @@ metric:
   goal: minimize # values: minimize, maximize
 parameters:
   config:
-    value: configs/exp/jepa_ablation.yaml
+    value: configs/exp/contrastive_jepa_ablation.yaml
   jepa.num_jepa_layers:
     values: [1, 2, 3, 4]
   jepa.global_weight:

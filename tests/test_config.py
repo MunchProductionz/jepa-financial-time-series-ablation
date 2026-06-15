@@ -50,6 +50,26 @@ def test_yaml_defaults_loader_merges_base_config() -> None:
     assert config.logging.training_history.save_epoch_metrics is True
 
 
+def test_smoke_configs_load() -> None:
+    paths = [
+        "configs/exp/smoke_short_tft.yaml",
+        "configs/exp/smoke_short_contrastive_jepa.yaml",
+        "configs/exp/smoke_short_lejepa.yaml",
+        "configs/exp/smoke_long_tft.yaml",
+        "configs/exp/smoke_long_contrastive_jepa.yaml",
+        "configs/exp/smoke_long_lejepa.yaml",
+    ]
+
+    configs = [load_config(path) for path in paths]
+
+    assert configs[0].jepa.enabled is False
+    assert configs[1].jepa.mode == "contrastive"
+    assert configs[2].jepa.mode == "lejepa"
+    assert configs[3].sliding_window.enabled is True
+    assert configs[4].dataset.lookback == 60
+    assert configs[5].jepa.lejepa.sigreg.apply_to == "context_only"
+
+
 def test_dotted_overrides_are_applied_to_loaded_config() -> None:
     config = load_config(
         "configs/exp/contrastive_jepa_ablation.yaml",
@@ -87,7 +107,7 @@ def test_sweep_config_gets_repo_safe_command_and_wandb_defaults() -> None:
     sweep_config = {
         "program": "ablation-study-jepa",
         "method": "grid",
-        "parameters": {"config": {"value": "configs/exp/jepa_ablation.yaml"}},
+        "parameters": {"config": {"value": "configs/exp/contrastive_jepa_ablation.yaml"}},
     }
 
     prepare_sweep_config(sweep_config, project="ablation-study-jepa")

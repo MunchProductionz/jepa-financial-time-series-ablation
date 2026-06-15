@@ -1,0 +1,33 @@
+defaults:
+  - smoke_long_base
+  - _self_
+
+run_name: smoke_long_contrastive_jepa
+
+model:
+  target: ablation_study_jepa.models.tft_with_jepa:TFTWithJEPA
+
+jepa:
+  enabled: true
+  mode: contrastive
+  num_jepa_layers: 2
+  layer_selection_mode: last_L
+  contrastive:
+    temperature: 0.1
+    negative_strategy: mixed
+    auxiliary:
+      gradient_strategy:
+        name: global_weighted
+      warmup:
+        enabled: true
+        start_epoch: 0
+        end_epoch: 2
+        start_scale: 0.0
+        end_scale: 1.0
+      diagnostics:
+        log_aux_loss_ratios: true
+        log_gradient_norms: false
+
+logging:
+  wandb:
+    tags: ["smoke", "long", "contrastive", "jepa"]

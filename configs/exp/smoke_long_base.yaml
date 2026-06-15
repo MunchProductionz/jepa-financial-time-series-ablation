@@ -1,0 +1,42 @@
+defaults:
+  - smoke_short_base
+  - _self_
+
+run_name: smoke_long_base
+
+data:
+  data_dir: data/prices/smoke/long/panel.csv
+
+sliding_window:
+  enabled: true
+  window_size_days: 360
+  step_days: 360
+  require_test_overlap: false
+
+dataset:
+  lookback: 60
+  batch_size: 32
+  num_workers: 0
+  persistent_workers: false
+  include_future_window: true
+  future_window: 20
+
+model:
+  hidden_dim: 32
+  num_transformer_blocks: 3
+  num_attention_heads: 4
+  dropout: 0.05
+  sequence_length: 60
+
+jepa:
+  projection_dim: 32
+  horizons: [1, 5, 20]
+  global_weight: 0.02
+
+training:
+  max_epochs: 2
+  log_every_n_steps: 5
+
+logging:
+  wandb:
+    tags: ["smoke", "long"]

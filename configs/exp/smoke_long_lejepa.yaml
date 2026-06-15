@@ -1,0 +1,40 @@
+defaults:
+  - smoke_long_base
+  - _self_
+
+run_name: smoke_long_lejepa
+
+model:
+  target: ablation_study_jepa.models.tft_with_jepa:TFTWithJEPA
+
+jepa:
+  enabled: true
+  mode: lejepa
+  num_jepa_layers: 2
+  layer_selection_mode: last_L
+  lejepa:
+    detach_target: true
+    loss_mix:
+      lambda_sigreg: 0.05
+    sigreg:
+      enabled: true
+      apply_to: context_only
+      num_slices: 64
+      num_t: 9
+      min_batch_size: 8
+    auxiliary:
+      gradient_strategy:
+        name: global_weighted
+      warmup:
+        enabled: true
+        start_epoch: 0
+        end_epoch: 2
+        start_scale: 0.0
+        end_scale: 1.0
+      diagnostics:
+        log_aux_loss_ratios: true
+        log_gradient_norms: false
+
+logging:
+  wandb:
+    tags: ["smoke", "long", "lejepa", "jepa"]
