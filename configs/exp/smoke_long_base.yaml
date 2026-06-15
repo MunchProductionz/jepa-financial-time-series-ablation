@@ -19,14 +19,12 @@ dataset:
   num_workers: 0
   persistent_workers: false
   include_future_window: true
-  future_window: 20
 
 model:
   hidden_dim: 32
   num_transformer_blocks: 3
   num_attention_heads: 4
   dropout: 0.05
-  sequence_length: 60
 
 jepa:
   projection_dim: 32
