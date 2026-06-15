@@ -30,6 +30,8 @@ The main ablation dimensions are:
 - JEPA horizons such as `[1]`, `[60]`, or `[1, 5, 20, 60]`
 - contrastive temperature, negative sampling strategy, and exclusion window for `contrastive` mode
 - LeJEPA prediction loss mix, target detachment, SIGReg application set, slices, t-grid, and minimum batch size for `lejepa` mode
+- auxiliary gradient strategy: `global_weighted` or `local_recompute`
+- auxiliary warmup, weighted-loss diagnostics, and optional gradient-norm diagnostics
 
 ## Data Assumptions
 
@@ -76,14 +78,17 @@ uv sync --dev
 Run an experiment from YAML:
 
 ```bash
-uv run ablation-study-jepa run --config configs/exp/jepa_ablation.yaml
+uv run ablation-study-jepa run --config configs/exp/contrastive_jepa_ablation.yaml
 ```
 
 Build deterministic synthetic sample data:
 
 ```bash
-uv run ablation-study-jepa build-sample-data --output data/prices/panel.csv
+uv run ablation-study-jepa build-sample-data --output data/prices/smoke/short/panel.csv
 ```
+
+Use `EXPERIMENT_SETUP.md` for the smoke-test configs, the core experiment matrix,
+and the recommended hyperparameter ablations.
 
 Run the test suite:
 
@@ -94,7 +99,7 @@ uv run pytest
 ## Correctness Rules
 
 - The supervised prediction path must only use information available as of anchor trading day `t`.
-- JEPA target windows ending at `t+k` are auxiliary targets only. Contrastive targets must remain detached. LeJEPA targets default to `detach_target: false`, with `detach_target: true` available as a stability fallback.
+- JEPA target windows ending at `t+k` are auxiliary targets only. Contrastive targets must remain detached. LeJEPA targets default to `detach_target: true`; `detach_target: false` is available for experiments after the conservative path is stable.
 - If a single sequence contains both context and future positions, the model must use causal attention so anchor states cannot attend to future states.
 - The default implementation uses separate as-of context and JEPA target windows.
 - Memory banks, if enabled later, must only contain training-split examples.
