@@ -12,23 +12,6 @@ data:
   limit: null
   start_date: null
   end_date: null
-  feature_columns:
-    - "Price Open"
-    - "Price High"
-    - "Price Low"
-    - "Price Close"
-    - "Price Adj_Close"
-    - Volume
-    - beta
-    - pe_ratio
-    - debt_to_equity
-    - interest_rate
-    - vix
-    - return_1d
-    - return_5d
-    - return_20d
-    - volatility_20d
-    - volume_zscore
   fast_feature_columns:
     - "Price Open"
     - "Price High"
@@ -42,11 +25,6 @@ data:
     - debt_to_equity
     - interest_rate
     - vix
-  static_feature_columns:
-    - sector_consumer
-    - sector_semiconductors
-    - sector_technology
-    - sector_unknown
 
 features:
   sequence:
@@ -87,14 +65,12 @@ dataset:
   num_workers: 0
   persistent_workers: false
   include_future_window: true
-  future_window: 5
 
 model:
   hidden_dim: 16
   num_transformer_blocks: 2
   num_attention_heads: 4
   dropout: 0.0
-  sequence_length: 24
 
 jepa:
   projection_dim: 16
@@ -109,7 +85,6 @@ training:
   devices: 1
   early_stopping: false
   log_every_n_steps: 1
-  seed: 42
 
 logging:
   training_history:

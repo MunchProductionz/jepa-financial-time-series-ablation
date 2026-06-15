@@ -20,32 +20,6 @@ data:
   limit: 10 # null uses all ticker files; integer caps the number of files
   start_date: "2015-01-01" # earliest: "1960-01-01"
   end_date: "2025-12-31" # latest: "2025-12-31"
-  trading_day_indexing: true
-  feature_columns:
-    - "Price Open"
-    - "Price High"
-    - "Price Low"
-    - "Price Close"
-    - "Price Adj_Close"
-    - Volume
-    # - beta # not present in raw Yahoo OHLCV files
-    # - pe_ratio # not present in raw Yahoo OHLCV files
-    # - debt_to_equity # not present in raw Yahoo OHLCV files
-    # - interest_rate # use FEDFUNDS from macro slow features instead
-    # - vix # raw macro file has VIXCLSx, not vix
-    - return_1d
-    - return_5d
-    - return_20d
-    - volatility_20d
-    - volume_zscore
-    - "S&P 500"
-    - FEDFUNDS
-    - GS1
-    - GS5
-    - GS10
-    - OILPRICEx
-    - "S&P div yield"
-    - "S&P PE ratio"
   fast_feature_columns:
     - "Price Open"
     - "Price High"
@@ -67,15 +41,9 @@ data:
     - OILPRICEx
     - "S&P div yield"
     - "S&P PE ratio"
-  target_column: target_return
   asset_id_column: ticker
   date_column: date
-  price_column: "Price Close"
-  volume_column: Volume
   sector_one_hot_prefix: sector_
-  scaler_type: standard # values: standard, robust, none
-  fit_scaler_on_train_only: true
-  prediction_timing: after_close # values: after_close, before_close
 
 features:
   price_column: "Price Close"
@@ -114,7 +82,6 @@ features:
   target:
     column: target_return
     horizon: 1
-    method: forward_return # values: forward_return
   normalization:
     method: standard # values: standard, robust, none
     fit_on_train_only: true
@@ -146,7 +113,6 @@ dataset:
   drop_last: false
   pin_memory: false
   include_future_window: true
-  future_window: 60
 
 model:
   target: ablation_study_jepa.models.tft:TFT
@@ -156,8 +122,6 @@ model:
   num_attention_heads: 4
   num_lstm_layers: 1
   dropout: 0.1
-  sequence_length: 60
-  prediction_horizon: 1
   use_causal_mask: true
   use_variable_selection: false
   output_dim: 1
@@ -251,7 +215,6 @@ training:
   early_stopping_min_delta: 0.0
   gradient_clip_val: 1.0
   log_every_n_steps: 10
-  seed: 42
 
 logging:
   training_history:
