@@ -6,6 +6,7 @@ import json
 import random
 from dataclasses import dataclass, field
 from pathlib import Path
+from time import perf_counter
 from typing import Any
 
 import numpy as np
@@ -23,6 +24,14 @@ from ablation_study_jepa.builders.windows import (
 )
 from ablation_study_jepa.config.loader import load_config
 from ablation_study_jepa.config.schemas import ExperimentConfig
+from ablation_study_jepa.evaluation.analysis_artifacts import (
+    collect_code_provenance,
+    collect_data_provenance,
+    save_analysis_artifacts,
+    save_run_status,
+    update_run_manifests,
+    utc_now,
+)
 from ablation_study_jepa.evaluation.metrics import compute_metrics
 from ablation_study_jepa.evaluation.predictions import (
     PREDICTION_COLUMNS,
@@ -47,6 +56,9 @@ class ExperimentResult:
     metrics_path: Path
     window_metrics: list[dict[str, Any]] = field(default_factory=list)
     training_history_paths: dict[str, Path] = field(default_factory=dict)
+    analysis_paths: dict[str, Path] = field(default_factory=dict)
+    manifest_paths: dict[str, Path] = field(default_factory=dict)
+    status_path: Path | None = None
 
 
 def run_experiment(config_path: str | Path) -> ExperimentResult:
@@ -62,8 +74,8 @@ class ExperimentRunner:
 
     def run(self) -> ExperimentResult:
         seed_everything(self.config.seed)
-        prepared = build_feature_panel(self.config)
-        window_plan = build_experiment_windows(self.config, prepared.feature_panel)
+        run_started_at = utc_now()
+        run_timer = perf_counter()
         prediction_paths: dict[str, Path] = {}
         config_dict = self.config.model_dump(mode="json")
         artifact_dir = make_prediction_run_dir(
@@ -73,6 +85,102 @@ class ExperimentRunner:
             tags=self.config.logging.wandb.tags,
         )
         config_path = self._save_config(config_dict=config_dict, output_dir=artifact_dir)
+        code_provenance = collect_code_provenance()
+        data_provenance: dict[str, Any] = {}
+        training_history_paths: dict[str, Path] = {}
+        training_plot_paths: dict[str, Path] = {}
+        manifest_paths: dict[str, Path] = {}
+        status_path = save_run_status(
+            output_dir=artifact_dir,
+            status="running",
+            config=self.config,
+            config_dict=config_dict,
+            started_at=run_started_at,
+            artifacts={"config": str(config_path)},
+        )
+        manifest_paths = update_run_manifests(
+            predictions_dir=self.config.evaluation.predictions_dir,
+            output_dir=artifact_dir,
+            config=self.config,
+            config_dict=config_dict,
+            status="running",
+            started_at=run_started_at,
+            artifact_paths={"config": config_path, "run_status": status_path},
+            code_provenance=code_provenance,
+        )
+
+        try:
+            return self._run_with_artifacts(
+                artifact_dir=artifact_dir,
+                config_dict=config_dict,
+                code_provenance=code_provenance,
+                data_provenance=data_provenance,
+                prediction_paths=prediction_paths,
+                training_history_paths=training_history_paths,
+                training_plot_paths=training_plot_paths,
+                manifest_paths=manifest_paths,
+                status_path=status_path,
+                run_started_at=run_started_at,
+                run_timer=run_timer,
+            )
+        except Exception as exc:
+            run_finished_at = utc_now()
+            elapsed_seconds = perf_counter() - run_timer
+            error = f"{type(exc).__name__}: {exc}"
+            status_path = save_run_status(
+                output_dir=artifact_dir,
+                status="failed",
+                config=self.config,
+                config_dict=self.config.model_dump(mode="json"),
+                started_at=run_started_at,
+                finished_at=run_finished_at,
+                elapsed_seconds=elapsed_seconds,
+                error=error,
+                artifacts={"config": str(config_path)},
+            )
+            update_run_manifests(
+                predictions_dir=self.config.evaluation.predictions_dir,
+                output_dir=artifact_dir,
+                config=self.config,
+                config_dict=self.config.model_dump(mode="json"),
+                status="failed",
+                started_at=run_started_at,
+                finished_at=run_finished_at,
+                elapsed_seconds=elapsed_seconds,
+                artifact_paths={"config": config_path, "run_status": status_path},
+                data_provenance=data_provenance,
+                code_provenance=code_provenance,
+                error=error,
+            )
+            raise
+
+    def _run_with_artifacts(
+        self,
+        *,
+        artifact_dir: Path,
+        config_dict: dict[str, Any],
+        code_provenance: dict[str, Any],
+        data_provenance: dict[str, Any],
+        prediction_paths: dict[str, Path],
+        training_history_paths: dict[str, Path],
+        training_plot_paths: dict[str, Path],
+        manifest_paths: dict[str, Path],
+        status_path: Path,
+        run_started_at: str,
+        run_timer: float,
+    ) -> ExperimentResult:
+        prepared = build_feature_panel(self.config)
+        window_plan = build_experiment_windows(self.config, prepared.feature_panel)
+        config_dict = self.config.model_dump(mode="json")
+        config_path = self._save_config(config_dict=config_dict, output_dir=artifact_dir)
+        data_provenance.update(
+            collect_data_provenance(
+                config=self.config,
+                raw_panel=prepared.raw_panel,
+                feature_panel=prepared.feature_panel,
+                window_plan=window_plan,
+            )
+        )
         print(
             json.dumps(
                 {
@@ -94,8 +202,6 @@ class ExperimentRunner:
         window_results: list[dict[str, Any]] = []
         all_val_predictions: list[pd.DataFrame] = []
         all_test_predictions: list[pd.DataFrame] = []
-        training_history_paths: dict[str, Path] = {}
-        training_plot_paths: dict[str, Path] = {}
         for window in window_plan.windows:
             result = self._run_window(
                 window,
@@ -144,6 +250,24 @@ class ExperimentRunner:
             training_history_paths["combined"] = combined_training_history_path
             training_plot_paths = self._save_training_history_plots(combined_training_history_path)
 
+        run_finished_at = utc_now()
+        elapsed_seconds = perf_counter() - run_timer
+        analysis_paths = save_analysis_artifacts(
+            output_dir=artifact_dir,
+            config=self.config,
+            config_dict=config_dict,
+            val_predictions=combined_val_predictions,
+            test_predictions=combined_test_predictions,
+            val_metrics=val_metrics,
+            test_metrics=test_metrics,
+            window_metrics=window_results,
+            data_provenance=data_provenance,
+            code_provenance=code_provenance,
+            run_started_at=run_started_at,
+            run_finished_at=run_finished_at,
+            elapsed_seconds=elapsed_seconds,
+            training_history_path=training_history_paths.get("combined"),
+        )
         metrics_path = self._save_metrics(
             val_metrics=val_metrics,
             test_metrics=test_metrics,
@@ -153,6 +277,45 @@ class ExperimentRunner:
             config_path=config_path,
             training_history_paths=training_history_paths,
             training_plot_paths=training_plot_paths,
+            analysis_paths=analysis_paths,
+            manifest_paths=manifest_paths,
+            status_path=status_path,
+        )
+        artifact_paths = {
+            "config": config_path,
+            "metrics": metrics_path,
+            "run_status": status_path,
+            **{f"prediction_{name}": path for name, path in prediction_paths.items()},
+            **{f"training_history_{name}": path for name, path in training_history_paths.items()},
+            **{f"training_plot_{name}": path for name, path in training_plot_paths.items()},
+            **{f"analysis_{name}": path for name, path in analysis_paths.items()},
+        }
+        status_path = save_run_status(
+            output_dir=artifact_dir,
+            status="completed",
+            config=self.config,
+            config_dict=config_dict,
+            started_at=run_started_at,
+            finished_at=run_finished_at,
+            elapsed_seconds=elapsed_seconds,
+            metrics={"val": val_metrics, "test": test_metrics},
+            artifacts={name: str(path) for name, path in artifact_paths.items()},
+        )
+        artifact_paths["run_status"] = status_path
+        manifest_paths = update_run_manifests(
+            predictions_dir=self.config.evaluation.predictions_dir,
+            output_dir=artifact_dir,
+            config=self.config,
+            config_dict=config_dict,
+            status="completed",
+            started_at=run_started_at,
+            finished_at=run_finished_at,
+            elapsed_seconds=elapsed_seconds,
+            val_metrics=val_metrics,
+            test_metrics=test_metrics,
+            artifact_paths=artifact_paths,
+            data_provenance=data_provenance,
+            code_provenance=code_provenance,
         )
         print(
             json.dumps(
@@ -173,6 +336,8 @@ class ExperimentRunner:
             test_predictions=str(prediction_paths.get("test", "")),
             training_history=str(training_history_paths.get("combined", "")),
             training_plots=str(training_plot_paths),
+            analysis=str(analysis_paths),
+            manifests=str(manifest_paths),
         )
         _log_final_metrics_to_wandb(
             enabled=self.config.logging.wandb.enabled,
@@ -187,6 +352,9 @@ class ExperimentRunner:
             metrics_path=metrics_path,
             window_metrics=window_results,
             training_history_paths=training_history_paths,
+            analysis_paths=analysis_paths,
+            manifest_paths=manifest_paths,
+            status_path=status_path,
         )
 
     def _run_window(
@@ -196,6 +364,8 @@ class ExperimentRunner:
         total_windows: int,
         artifact_dir: Path,
     ) -> dict[str, Any]:
+        window_started_at = utc_now()
+        window_timer = perf_counter()
         seed_everything(self.config.seed)
         _log_window_progress(
             window,
@@ -296,6 +466,9 @@ class ExperimentRunner:
             **window.to_dict(),
             "val": val_metrics,
             "test": test_metrics,
+            "started_at": window_started_at,
+            "finished_at": utc_now(),
+            "elapsed_seconds": perf_counter() - window_timer,
         }
         _log_window_progress(
             window,
@@ -327,6 +500,9 @@ class ExperimentRunner:
         config_path: Path | None = None,
         training_history_paths: dict[str, Path] | None = None,
         training_plot_paths: dict[str, Path] | None = None,
+        analysis_paths: dict[str, Path] | None = None,
+        manifest_paths: dict[str, Path] | None = None,
+        status_path: Path | None = None,
     ) -> Path:
         output_dir.mkdir(parents=True, exist_ok=True)
         path = output_dir / "metrics.json"
@@ -350,6 +526,15 @@ class ExperimentRunner:
                     name: str(path)
                     for name, path in (training_plot_paths or {}).items()
                 },
+                "analysis": {
+                    name: str(path)
+                    for name, path in (analysis_paths or {}).items()
+                },
+                "manifests": {
+                    name: str(path)
+                    for name, path in (manifest_paths or {}).items()
+                },
+                "run_status": str(status_path) if status_path is not None else None,
             },
         }
         path.write_text(
