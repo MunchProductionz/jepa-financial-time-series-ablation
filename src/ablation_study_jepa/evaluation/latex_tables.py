@@ -165,19 +165,25 @@ def export_comparison_latex(
 
 def export_per_model_window_latex(
     predictions_dir: str | Path,
-    output_dir: str | Path,
+    output_dir: str | Path | None = None,
     split: str = "test",
     metric_columns: list[str] | None = None,
     metric_directions: dict[str, MetricDirection] | None = None,
+    per_run_subdir: str = "latex",
 ) -> list[Path]:
-    """Write per-run window metric tables as LaTeX."""
+    """Write per-run window metric tables as LaTeX.
 
-    output_path = Path(output_dir)
-    output_path.mkdir(parents=True, exist_ok=True)
+    When ``output_dir`` is omitted, each table is written inside its run folder
+    under ``per_run_subdir``. Passing ``output_dir`` preserves the older behavior
+    of collecting every per-run table in one directory.
+    """
+
     paths = []
     for run_dir in discover_run_dirs(predictions_dir):
         frame = window_metrics_wide_frame(run_dir, split=split)
         run_name = _safe_name(run_dir.name)
+        output_path = Path(output_dir) if output_dir is not None else run_dir / per_run_subdir
+        output_path.mkdir(parents=True, exist_ok=True)
         latex = per_model_latex_table(
             frame,
             metric_columns=metric_columns,
@@ -185,7 +191,12 @@ def export_per_model_window_latex(
             caption=f"{split.title()} per-window metrics for {run_dir.name}.",
             label=f"tab:{run_name}_{split}_window_metrics",
         )
-        path = output_path / f"per_model_window_metrics_{run_name}_{split}.tex"
+        filename = (
+            f"per_model_window_metrics_{run_name}_{split}.tex"
+            if output_dir is not None
+            else f"window_metrics_{split}.tex"
+        )
+        path = output_path / filename
         path.write_text(latex, encoding="utf-8")
         paths.append(path)
     return paths
@@ -197,8 +208,9 @@ def export_study_latex_tables(
     metric_columns: list[str] | None = None,
     metric_directions: dict[str, MetricDirection] | None = None,
     splits: tuple[str, ...] = ("val", "test"),
+    per_model_output_dir: str | Path | None = None,
 ) -> dict[str, Path | list[Path]]:
-    """Write comparison and per-model LaTeX tables for a study."""
+    """Write shared comparison tables and per-run model tables for a study."""
 
     paths: dict[str, Path | list[Path]] = {}
     for split in splits:
@@ -211,7 +223,7 @@ def export_study_latex_tables(
         )
         paths[f"per_model_windows_{split}"] = export_per_model_window_latex(
             predictions_dir=predictions_dir,
-            output_dir=output_dir,
+            output_dir=per_model_output_dir,
             split=split,
             metric_columns=metric_columns,
             metric_directions=metric_directions,
