@@ -53,24 +53,69 @@ For data in Colab, start with `DATA_MODE = "smoke"` to verify the full pipeline.
 /content/drive/MyDrive/jepa_financial_ablation/data/macro/fred_md/fred_md_1960_2025.csv
 ```
 
-The notebook writes run artifacts under a Drive-backed `predictions` directory so interrupted Colab sessions do not erase finished results.
+The notebook writes run artifacts under a Drive-backed study directory so interrupted Colab sessions do not erase finished results. Use a new `STUDY_ID` for each experiment batch:
+
+```python
+STUDY_KIND = "smoke"  # or "real"
+STUDY_ID = "2026_06_20_colab_smoke_pipeline_check"
+STUDY_ROOT = DRIVE_ROOT / STUDY_KIND / STUDY_ID
+PREDICTIONS_DIR = STUDY_ROOT / "predictions"
+LATEX_SHARED_DIR = STUDY_ROOT / "shared" / "comparison"
+```
+
+Recommended layout:
+
+```text
+jepa_financial_ablation/
+  data/
+    prices/
+    macro/
+  smoke/
+    2026_06_20_colab_smoke_pipeline_check/
+      predictions/
+        runs_manifest.csv
+        <run_name>_<timestamp>_<config_hash>/
+          metrics.json
+          val.csv
+          test.csv
+          analysis/
+          latex/
+            window_metrics_val.tex
+            window_metrics_test.tex
+      shared/
+        comparison/
+          comparison_val_metrics.tex
+          comparison_test_metrics.tex
+  real/
+    2026_06_21_fixed_lejepa_core_ablation/
+      predictions/
+      shared/
+        comparison/
+```
+
+This keeps smoke and real studies separate, preserves immutable per-run artifacts, and avoids overwriting comparison tables across repeated experiment batches.
 
 ### LaTeX Tables
 
-The Colab notebook exports LaTeX tables to:
+The Colab notebook exports shared comparison LaTeX tables to:
 
 ```text
-/content/drive/MyDrive/jepa_financial_ablation/latex_tables
+/content/drive/MyDrive/jepa_financial_ablation/<smoke-or-real>/<study_id>/shared/comparison
 ```
 
 The reusable exporters live in `src/ablation_study_jepa/evaluation/latex_tables.py`.
 
-Generated tables include:
+Generated shared comparison tables include:
 
 - `comparison_val_metrics.tex`
 - `comparison_test_metrics.tex`
-- `per_model_window_metrics_<run>_val.tex`
-- `per_model_window_metrics_<run>_test.tex`
+
+Per-model/window tables are written inside each run folder:
+
+```text
+<study_root>/predictions/<run_id>/latex/window_metrics_val.tex
+<study_root>/predictions/<run_id>/latex/window_metrics_test.tex
+```
 
 Comparison tables use one row per model/config/run and metrics as columns. Metric headers include direction arrows, for example `RMSE ($\downarrow$)` and `Spearman IC ($\uparrow$)`. The best value in each directional metric column is written as `\textbf{...}`. The tables use `booktabs`, so include this in the LaTeX preamble:
 

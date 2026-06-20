@@ -99,7 +99,8 @@ For Google Colab, use `notebooks/colab_experiment_runner.ipynb`. It mounts
 Drive, installs the repo, prepares smoke or Drive-backed data, runs model
 configs, reloads saved artifacts for later analysis, and exports LaTeX tables
 with metrics as columns, best comparison values in bold, and up/down arrows in
-metric headers.
+metric headers. The notebook separates `smoke/<study_id>` and `real/<study_id>`
+outputs so repeated experiment batches do not overwrite each other.
 
 The project is intentionally configured around `uv`; use `.python-version` and
 `pyproject.toml` as the source of truth for the Python version and dependencies.

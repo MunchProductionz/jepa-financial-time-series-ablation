@@ -6,6 +6,7 @@ from ablation_study_jepa.evaluation.compare_runs import comparison_metrics_frame
 from ablation_study_jepa.evaluation.latex_tables import (
     comparison_latex_table,
     export_comparison_latex,
+    export_study_latex_tables,
     metric_header,
 )
 
@@ -62,6 +63,32 @@ def test_comparison_metrics_frame_and_latex_export_from_saved_runs(tmp_path) -> 
     latex = path.read_text(encoding="utf-8")
     assert "\\textbf{0.2}" in latex
     assert "\\textbf{0.1}" in latex
+
+
+def test_study_latex_export_uses_shared_and_per_run_folders(tmp_path) -> None:
+    predictions_dir = tmp_path / "real" / "study-a" / "predictions"
+    shared_dir = tmp_path / "real" / "study-a" / "shared" / "comparison"
+    run_a = predictions_dir / "run-a"
+    run_b = predictions_dir / "run-b"
+    run_a.mkdir(parents=True)
+    run_b.mkdir(parents=True)
+    _write_metrics(run_a, "baseline", rmse=0.30, spearman_rank_ic=0.05)
+    _write_metrics(run_b, "lejepa", rmse=0.20, spearman_rank_ic=0.10)
+
+    paths = export_study_latex_tables(
+        predictions_dir=predictions_dir,
+        output_dir=shared_dir,
+        metric_columns=["rmse", "spearman_rank_ic"],
+        splits=("test",),
+    )
+
+    assert paths["comparison_test"] == shared_dir / "comparison_test_metrics.tex"
+    assert (run_a / "latex" / "window_metrics_test.tex").exists()
+    assert (run_b / "latex" / "window_metrics_test.tex").exists()
+    assert all(
+        "shared/comparison" not in str(path)
+        for path in paths["per_model_windows_test"]
+    )
 
 
 def _write_metrics(run_dir, run_name: str, rmse: float, spearman_rank_ic: float) -> None:
