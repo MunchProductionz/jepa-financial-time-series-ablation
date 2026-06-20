@@ -70,6 +70,30 @@ def test_smoke_configs_load() -> None:
     assert configs[5].jepa.lejepa.sigreg.apply_to == "context_only"
 
 
+def test_fixed_lejepa_ablation_configs_load() -> None:
+    paths = [
+        "configs/exp/lejepa_fixed_base.yaml",
+        "configs/exp/lejepa_fixed_predictive_only.yaml",
+        "configs/exp/lejepa_fixed_sigreg_only_direct_h.yaml",
+        "configs/exp/lejepa_fixed_sigreg_only_adapter_whitened.yaml",
+        "configs/exp/lejepa_fixed_predictive_sigreg_adapter_whitened.yaml",
+        "configs/exp/lejepa_fixed_domain_adapter.yaml",
+        "configs/exp/lejepa_fixed_no_stop_gradient.yaml",
+        "configs/exp/lejepa_fixed_multi_tap.yaml",
+    ]
+
+    configs = [load_config(path) for path in paths]
+
+    assert all(config.jepa.mode == "lejepa" for config in configs)
+    assert all(config.jepa.lejepa.loss_mix.mode == "fixed" for config in configs)
+    assert configs[1].jepa.lejepa.loss_mix.lambda_sigreg == pytest.approx(0.0)
+    assert configs[2].jepa.lejepa.representation.mode == "direct_h"
+    assert configs[3].jepa.lejepa.representation.mode == "adapter_whitened"
+    assert configs[5].jepa.lejepa.representation.domain_context.enabled is True
+    assert configs[6].jepa.lejepa.detach_target is False
+    assert configs[7].jepa.num_jepa_layers == 3
+
+
 def test_dotted_overrides_are_applied_to_loaded_config() -> None:
     config = load_config(
         "configs/exp/contrastive_jepa_ablation.yaml",
@@ -143,6 +167,27 @@ def test_lejepa_config_parses_separate_loss_settings() -> None:
     assert config.jepa.lejepa.sigreg.apply_to == "context_only"
     assert config.jepa.lejepa.auxiliary.gradient_strategy.name == "global_weighted"
     assert config.jepa.lejepa.auxiliary.warmup.enabled is True
+
+
+def test_lejepa_fixed_loss_and_representation_config_parse() -> None:
+    config = JEPAConfig(
+        enabled=True,
+        mode="lejepa",
+        lejepa={
+            "loss_mix": {"mode": "fixed", "lambda_pred": 1.0, "lambda_sigreg": 0.05},
+            "representation": {
+                "mode": "adapter_whitened",
+                "adapter_dim": 64,
+                "whitening": "layer_norm",
+                "domain_context": {"enabled": True, "input_dim": 4},
+            },
+        },
+    )
+
+    assert config.lejepa.loss_mix.coefficients() == pytest.approx((1.0, 0.05))
+    assert config.lejepa.representation.mode == "adapter_whitened"
+    assert config.lejepa.representation.adapter_dim == 64
+    assert config.lejepa.representation.domain_context.enabled is True
 
 
 def test_lambda_jepa_alias_sets_global_weight() -> None:

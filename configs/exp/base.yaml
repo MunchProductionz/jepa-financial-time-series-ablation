@@ -175,7 +175,11 @@ jepa:
     prediction_loss: mse # values: mse
     detach_target: true
     loss_mix:
-      mode: lambda_sigreg # values: lambda_sigreg
+      # lambda_sigreg preserves the legacy convex mix:
+      # (1 - lambda_sigreg) * L_aux_predictive + lambda_sigreg * L_sigreg.
+      # fixed uses lambda_pred and lambda_sigreg as independent coefficients.
+      mode: lambda_sigreg # values: lambda_sigreg, fixed
+      lambda_pred: null
       lambda_sigreg: 0.5
     sigreg:
       enabled: true
@@ -185,6 +189,17 @@ jepa:
       t_max: 5.0
       resample_directions_each_step: true
       min_batch_size: 8
+    representation:
+      # projected preserves the original JEPA projector behavior.
+      # direct_h applies predictive/SIGReg losses in native h_l space.
+      # adapter_whitened uses u_l=A_l(norm(h_l), c), z_l=W_l(u_l), and SIGReg on z_l.
+      mode: projected # values: projected, direct_h, adapter_whitened
+      adapter_dim: null
+      whitening: layer_norm # values: none, layer_norm, batch_norm, l2
+      domain_context:
+        enabled: false
+        source: static # values: static
+        input_dim: null
     auxiliary:
       gradient_strategy:
         name: global_weighted # values: global_weighted, local_recompute
@@ -199,6 +214,7 @@ jepa:
       diagnostics:
         log_aux_loss_ratios: true
         log_gradient_norms: false
+        log_representation_stats: false
 
 training:
   batch_size: 128
@@ -232,12 +248,15 @@ logging:
     tags: ["baseline"]
 
 evaluation:
-  metrics: # values: mse, mae, correlation, directional_accuracy, spearman_rank_ic, rank_correlation, top_bottom_quantile_spread
+  metrics: # values include mse, rmse, mae, correlation, directional_accuracy/mda, positive_prediction_share, spearman_rank_ic/rank_correlation, top_bottom_quantile_spread, long_short_decile_return, long_short_decile_cagr, long_short_decile_annualized_volatility, long_short_decile_sharpe, long_short_decile_sortino, long_short_decile_max_drawdown, long_short_decile_hit_rate, long_short_decile_turnover, long_short_decile_transaction_cost_adjusted_return, long_only_decile_return, equal_weight_benchmark_return, sector_neutral_spearman_rank_ic
     - mse
     - mae
     - correlation
     - directional_accuracy
     - spearman_rank_ic
     - top_bottom_quantile_spread
+  portfolio_quantile: 0.2
+  annualization_factor: 252
+  transaction_cost_bps: 0.0
   save_predictions: true
   predictions_dir: predictions

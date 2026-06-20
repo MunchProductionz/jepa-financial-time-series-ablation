@@ -1,0 +1,28 @@
+defaults:
+  - lejepa_fixed_base
+  - _self_
+
+run_name: tft_lejepa_fixed_predictive_sigreg_adapter_whitened_last1_h1
+
+jepa:
+  lejepa:
+    loss_mix:
+      mode: fixed
+      lambda_pred: 0.05
+      lambda_sigreg: 0.05
+    sigreg:
+      enabled: true
+      apply_to: context_only
+    representation:
+      mode: adapter_whitened
+      adapter_dim: 128
+      whitening: layer_norm
+      domain_context:
+        enabled: false
+    auxiliary:
+      diagnostics:
+        log_representation_stats: true
+
+logging:
+  wandb:
+    tags: ["lejepa", "fixed", "predictive_sigreg", "adapter_whitened", "last1"]

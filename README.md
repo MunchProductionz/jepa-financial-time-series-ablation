@@ -123,6 +123,42 @@ When JEPA is enabled, selected Transformer block outputs feed auxiliary heads th
 
 JEPA modules are training-only. Validation, testing, and inference use only the base forecasting path.
 
+## Model Modes
+
+The experiment mode is selected by config:
+
+- `tft`: `model.target: ablation_study_jepa.models.tft:TFT` and `jepa.enabled: false`.
+- `contrastive`: `model.target: ablation_study_jepa.models.tft_with_jepa:TFTWithJEPA`, `jepa.enabled: true`, and `jepa.mode: contrastive`.
+- `lejepa`: `model.target: ablation_study_jepa.models.tft_with_jepa:TFTWithJEPA`, `jepa.enabled: true`, and `jepa.mode: lejepa`.
+
+The contrastive branch uses InfoNCE with configured in-batch negative sampling. The LeJEPA branch uses latent prediction plus optional SIGReg and does not use negatives or memory banks.
+
+For fixed-coefficient LeJEPA ablations, use:
+
+```yaml
+jepa:
+  global_weight: 1.0
+  lejepa:
+    loss_mix:
+      mode: fixed
+      lambda_pred: 0.05
+      lambda_sigreg: 0.01
+```
+
+This gives `L_total = L_main + sum_l(lambda_pred_l * L_aux_predictive_l + lambda_sigreg_l * L_sigreg_l)`, with normalized layer weights applied inside the auxiliary module. Set either coefficient to `0.0` for predictive-only or SIGReg-only ablations.
+
+LeJEPA representation options:
+
+- `jepa.lejepa.representation.mode: projected`: legacy projector path.
+- `direct_h`: applies the auxiliary predictor and SIGReg in native block-output space `h_l`.
+- `adapter_whitened`: computes `u_l = A_l(norm(h_l), c)`, `z_l = W_l(u_l)`, predicts future `z`, and applies SIGReg to `z_l`.
+
+Domain context is optional and configured under `jepa.lejepa.representation.domain_context`. The current implementation uses existing static features when `source: static`; these must be known at prediction time. Domain context is injected only into the adapter before whitening, never after the whitening head.
+
+Target handling is controlled by `jepa.lejepa.detach_target`. The default is stop-gradient targets. Set `detach_target: false` and `jepa.lejepa.auxiliary.gradient_strategy.compute_target_with_no_grad: false` for no-stop-gradient experiments.
+
+Auxiliary representation diagnostics are optional. Enable `jepa.lejepa.auxiliary.diagnostics.log_representation_stats: true` to log covariance-to-identity, effective rank, and feature variance for available `h`, `u`, and `z` latents. These diagnostics help interpret representation geometry, but model selection should be based on held-out predictive and portfolio performance.
+
 ## Leakage Prevention
 
 The default dataset creates separate windows:

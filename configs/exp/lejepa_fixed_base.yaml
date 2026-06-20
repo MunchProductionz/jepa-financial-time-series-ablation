@@ -1,0 +1,88 @@
+defaults:
+  - base
+  - _self_
+
+run_name: tft_lejepa_fixed_projected_last1_h1
+
+model:
+  target: ablation_study_jepa.models.tft_with_jepa:TFTWithJEPA
+  hidden_dim: 128
+  num_transformer_blocks: 4
+  num_attention_heads: 4
+  dropout: 0.1
+  use_causal_mask: true
+
+jepa:
+  enabled: true
+  mode: lejepa
+  num_jepa_layers: 1
+  layer_selection_mode: last_L
+  projection_dim: 128
+  predictor_type: mlp
+  horizons: [1]
+  # In fixed mode, keep the global wrapper at 1.0 and tune the coefficients below.
+  global_weight: 1.0
+  layer_weight_scheme: uniform
+  horizon_weight_scheme: uniform
+  lejepa:
+    detach_target: true
+    loss_mix:
+      mode: fixed
+      lambda_pred: 0.05
+      lambda_sigreg: 0.01
+    sigreg:
+      enabled: true
+      apply_to: context_only
+      num_slices: 256
+      num_t: 17
+      t_max: 5.0
+      resample_directions_each_step: true
+      min_batch_size: 8
+    representation:
+      mode: projected
+      adapter_dim: null
+      whitening: layer_norm
+      domain_context:
+        enabled: false
+        source: static
+        input_dim: null
+    auxiliary:
+      gradient_strategy:
+        name: global_weighted
+      warmup:
+        enabled: true
+        start_epoch: 0
+        end_epoch: 10
+        start_scale: 0.0
+        end_scale: 1.0
+      diagnostics:
+        log_aux_loss_ratios: true
+        log_gradient_norms: false
+        log_representation_stats: false
+
+evaluation:
+  metrics:
+    - rmse
+    - mae
+    - spearman_rank_ic
+    - directional_accuracy
+    - positive_prediction_share
+    - long_short_decile_return
+    - long_short_decile_cagr
+    - long_short_decile_annualized_volatility
+    - long_short_decile_sharpe
+    - long_short_decile_sortino
+    - long_short_decile_max_drawdown
+    - long_short_decile_hit_rate
+    - long_short_decile_turnover
+    - long_short_decile_transaction_cost_adjusted_return
+    - long_only_decile_return
+    - equal_weight_benchmark_return
+    - sector_neutral_spearman_rank_ic
+  portfolio_quantile: 0.1
+  annualization_factor: 252
+  transaction_cost_bps: 10.0
+
+logging:
+  wandb:
+    tags: ["lejepa", "fixed", "projected", "last1", "horizon_1"]

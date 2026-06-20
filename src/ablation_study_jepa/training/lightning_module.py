@@ -67,12 +67,14 @@ class ReturnPredictionLightningModule(BaseLightningModule):
                     metadata=batch["metadata"],
                     context_transformer_input=outputs.get("transformer_input"),
                     attention_mask=outputs.get("attention_mask"),
+                    domain_context=self._jepa_domain_context(batch),
                 )
             else:
                 jepa_output = self.jepa_module(
                     context_hidden_states=outputs["hidden_states"],
                     target_hidden_states_by_horizon=target_hidden_by_horizon,
                     metadata=batch["metadata"],
+                    domain_context=self._jepa_domain_context(batch),
                 )
             jepa_loss = jepa_output["loss"]
             jepa_logs = jepa_output["logs"]
@@ -176,6 +178,20 @@ class ReturnPredictionLightningModule(BaseLightningModule):
             return False
         return not config.lejepa.detach_target
 
+    def _jepa_domain_context(self, batch: dict[str, Any]) -> torch.Tensor | None:
+        if self.jepa_module is None:
+            return None
+        config = self.jepa_module.config
+        if config.mode != "lejepa":
+            return None
+        if not config.lejepa.representation.domain_context.enabled:
+            return None
+        if "static" not in batch:
+            raise RuntimeError(
+                "LeJEPA domain_context.enabled=true requires static features in the batch"
+            )
+        return batch["static"]
+
     def _jepa_warmup_scale(self) -> float:
         auxiliary_config = self._active_auxiliary_config()
         if auxiliary_config is None:
@@ -237,17 +253,42 @@ class ReturnPredictionLightningModule(BaseLightningModule):
         groups = self._transformer_block_parameter_groups()
         if not groups:
             return {}
-        supervised_norms = self._loss_grad_norms_by_group(supervised_loss, groups)
-        auxiliary_norms = self._loss_grad_norms_by_group(weighted_jepa_loss, groups)
+        supervised_vectors = self._loss_grad_vectors_by_group(supervised_loss, groups)
+        auxiliary_vectors = self._loss_grad_vectors_by_group(weighted_jepa_loss, groups)
 
         logs: dict[str, torch.Tensor] = {}
-        for layer in supervised_norms:
-            supervised_norm = supervised_norms[layer]
-            auxiliary_norm = auxiliary_norms[layer]
+        zero = torch.zeros((), dtype=supervised_loss.dtype, device=supervised_loss.device)
+        for layer, _ in groups:
+            supervised_vector = supervised_vectors.get(layer)
+            auxiliary_vector = auxiliary_vectors.get(layer)
+            if supervised_vector is None or supervised_vector.numel() == 0:
+                supervised_norm = zero
+            else:
+                supervised_norm = supervised_vector.norm().to(dtype=supervised_loss.dtype)
+            if auxiliary_vector is None or auxiliary_vector.numel() == 0:
+                auxiliary_norm = zero
+            else:
+                auxiliary_norm = auxiliary_vector.norm().to(dtype=supervised_loss.dtype)
             logs[f"grad_norm_supervised_block_{layer}"] = supervised_norm
             logs[f"grad_norm_aux_block_{layer}"] = auxiliary_norm
             logs[f"grad_norm_aux_to_supervised_ratio_block_{layer}"] = (
                 auxiliary_norm / supervised_norm.clamp_min(1e-12)
+            )
+            if (
+                supervised_vector is not None
+                and auxiliary_vector is not None
+                and supervised_vector.numel() > 0
+                and auxiliary_vector.numel() > 0
+            ):
+                denominator = supervised_vector.norm() * auxiliary_vector.norm()
+                if bool((denominator > 0).item()):
+                    cosine = torch.dot(supervised_vector, auxiliary_vector) / denominator
+                else:
+                    cosine = zero
+            else:
+                cosine = zero
+            logs[f"grad_cosine_aux_supervised_block_{layer}"] = cosine.to(
+                dtype=supervised_loss.dtype
             )
         return logs
 
@@ -272,16 +313,18 @@ class ReturnPredictionLightningModule(BaseLightningModule):
         ]
 
     @staticmethod
-    def _loss_grad_norms_by_group(
+    def _loss_grad_vectors_by_group(
         loss: torch.Tensor,
         groups: list[tuple[int, list[nn.Parameter]]],
     ) -> dict[int, torch.Tensor]:
-        zero = torch.zeros((), dtype=loss.dtype, device=loss.device)
         filtered_groups: list[tuple[int, list[nn.Parameter]]] = [
             (idx, params) for idx, params in groups if params
         ]
         if not filtered_groups or not loss.requires_grad:
-            return {idx: zero for idx, _ in groups}
+            return {
+                idx: torch.zeros(0, dtype=torch.float32, device=loss.device)
+                for idx, _ in groups
+            }
 
         flat_params = [param for _, params in filtered_groups for param in params]
         grads = torch.autograd.grad(
@@ -291,23 +334,27 @@ class ReturnPredictionLightningModule(BaseLightningModule):
             allow_unused=True,
         )
 
-        norms: dict[int, torch.Tensor] = {}
+        vectors: dict[int, torch.Tensor] = {}
         offset = 0
         for idx, params in filtered_groups:
             group_grads = grads[offset : offset + len(params)]
             offset += len(params)
-            squared = [
-                grad.detach().float().square().sum()
-                for grad in group_grads
-                if grad is not None
+            flat_grads = [
+                (
+                    grad.detach().float().flatten()
+                    if grad is not None
+                    else torch.zeros(param.numel(), dtype=torch.float32, device=loss.device)
+                )
+                for param, grad in zip(params, group_grads, strict=True)
             ]
-            if squared:
-                norms[idx] = torch.stack(squared).sum().sqrt().to(dtype=loss.dtype)
-            else:
-                norms[idx] = zero
+            vectors[idx] = torch.cat(flat_grads) if flat_grads else torch.zeros(
+                0,
+                dtype=torch.float32,
+                device=loss.device,
+            )
         for idx, _ in groups:
-            norms.setdefault(idx, zero)
-        return norms
+            vectors.setdefault(idx, torch.zeros(0, dtype=torch.float32, device=loss.device))
+        return vectors
 
     def _log_dict(self, values: dict[str, torch.Tensor], **kwargs: Any) -> None:
         if pl is not None:

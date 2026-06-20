@@ -152,6 +152,142 @@ def test_lejepa_loss_combines_prediction_and_sigreg_terms() -> None:
     assert target_hidden[1].grad is not None
 
 
+def test_lejepa_fixed_coefficients_can_zero_predictive_term() -> None:
+    config = JEPAConfig(
+        enabled=True,
+        mode="lejepa",
+        num_jepa_layers=1,
+        layer_selection_mode="last_L",
+        projection_dim=8,
+        horizons=[1],
+        lejepa={
+            "detach_target": True,
+            "loss_mix": {"mode": "fixed", "lambda_pred": 0.0, "lambda_sigreg": 0.2},
+            "sigreg": {
+                "enabled": True,
+                "num_slices": 8,
+                "num_t": 5,
+                "t_max": 2.0,
+                "min_batch_size": 2,
+            },
+        },
+    )
+    module = MultiLayerJEPAModule(hidden_dim=12, num_transformer_blocks=1, config=config)
+    context_hidden = [torch.randn(4, 5, 12, requires_grad=True)]
+    target_hidden = [torch.randn(4, 5, 12, requires_grad=True)]
+
+    output = module(context_hidden, {1: target_hidden}, metadata={})
+    logs = output["logs"]
+
+    assert torch.allclose(output["loss"], 0.2 * logs["jepa_sigreg_loss"])
+    assert logs["jepa_lambda_pred"].item() == pytest.approx(0.0)
+    assert logs["jepa_lambda_sigreg"].item() == pytest.approx(0.2)
+
+
+def test_lejepa_zero_fixed_coefficients_produce_zero_auxiliary_loss() -> None:
+    config = JEPAConfig(
+        enabled=True,
+        mode="lejepa",
+        num_jepa_layers=1,
+        layer_selection_mode="last_L",
+        projection_dim=8,
+        horizons=[1],
+        lejepa={
+            "loss_mix": {"mode": "fixed", "lambda_pred": 0.0, "lambda_sigreg": 0.0},
+            "sigreg": {"enabled": True, "num_slices": 8, "num_t": 5, "min_batch_size": 2},
+        },
+    )
+    module = MultiLayerJEPAModule(hidden_dim=12, num_transformer_blocks=1, config=config)
+    context_hidden = [torch.randn(4, 5, 12, requires_grad=True)]
+    target_hidden = [torch.randn(4, 5, 12, requires_grad=True)]
+
+    output = module(context_hidden, {1: target_hidden}, metadata={})
+    output["loss"].backward()
+
+    assert output["loss"].item() == pytest.approx(0.0)
+    assert _tensor_grad_norm(context_hidden[0]) == pytest.approx(0.0)
+
+
+def test_lejepa_direct_h_sigreg_operates_in_hidden_dimension() -> None:
+    config = JEPAConfig(
+        enabled=True,
+        mode="lejepa",
+        num_jepa_layers=1,
+        layer_selection_mode="last_L",
+        projection_dim=8,
+        horizons=[1],
+        lejepa={
+            "loss_mix": {"mode": "fixed", "lambda_pred": 0.0, "lambda_sigreg": 1.0},
+            "representation": {"mode": "direct_h"},
+            "sigreg": {
+                "enabled": True,
+                "num_slices": 8,
+                "num_t": 5,
+                "t_max": 2.0,
+                "min_batch_size": 2,
+            },
+        },
+    )
+    module = MultiLayerJEPAModule(hidden_dim=12, num_transformer_blocks=1, config=config)
+    context_hidden = [torch.randn(4, 5, 12, requires_grad=True)]
+    target_hidden = [torch.randn(4, 5, 12, requires_grad=True)]
+
+    output = module(context_hidden, {1: target_hidden}, metadata={})
+    output["loss"].backward()
+
+    assert module.sigreg_loss.embedding_dim == 12
+    assert torch.isfinite(output["loss"])
+    assert context_hidden[0].grad is not None
+
+
+def test_lejepa_adapter_whitened_head_shapes_with_domain_context() -> None:
+    config = JEPAConfig(
+        enabled=True,
+        mode="lejepa",
+        num_jepa_layers=1,
+        layer_selection_mode="last_L",
+        projection_dim=8,
+        horizons=[1],
+        lejepa={
+            "loss_mix": {"mode": "fixed", "lambda_pred": 1.0, "lambda_sigreg": 0.1},
+            "representation": {
+                "mode": "adapter_whitened",
+                "adapter_dim": 10,
+                "whitening": "layer_norm",
+                "domain_context": {"enabled": True, "input_dim": 3},
+            },
+            "sigreg": {
+                "enabled": True,
+                "num_slices": 8,
+                "num_t": 5,
+                "t_max": 2.0,
+                "min_batch_size": 2,
+            },
+            "auxiliary": {"diagnostics": {"log_representation_stats": True}},
+        },
+    )
+    module = MultiLayerJEPAModule(
+        hidden_dim=12,
+        num_transformer_blocks=1,
+        config=config,
+        static_input_dim=3,
+    )
+    context_hidden = [torch.randn(4, 5, 12, requires_grad=True)]
+    target_hidden = [torch.randn(4, 5, 12, requires_grad=True)]
+    domain_context = torch.randn(4, 3)
+    head = module.heads["0"]
+
+    latents = head.representation_latents(context_hidden[0][:, -1, :], domain_context)
+    output = module(context_hidden, {1: target_hidden}, metadata={}, domain_context=domain_context)
+    output["loss"].backward()
+
+    assert latents["h"].shape == (4, 12)
+    assert latents["u"].shape == (4, 10)
+    assert latents["z"].shape == (4, 8)
+    assert "jepa_z_cov_identity_mse" in output["logs"]
+    assert context_hidden[0].grad is not None
+
+
 def test_lejepa_can_detach_only_target_latents() -> None:
     config = JEPAConfig(
         enabled=True,
@@ -281,6 +417,51 @@ def test_lejepa_inference_forward_does_not_require_future_windows() -> None:
     batch = {"x": torch.randn(2, 12, 5)}
 
     output = model(batch, return_hidden_states=False)
+
+    assert output["y_pred"].shape == (2, 1)
+    assert output["hidden_states"] is None
+
+
+def test_lejepa_checkpoint_loads_for_inference_without_future_windows(tmp_path) -> None:
+    config = JEPAConfig(
+        enabled=True,
+        mode="lejepa",
+        num_jepa_layers=1,
+        layer_selection_mode="last_L",
+        projection_dim=8,
+        horizons=[1],
+        lejepa={
+            "representation": {
+                "mode": "adapter_whitened",
+                "adapter_dim": 8,
+                "domain_context": {"enabled": True, "input_dim": 4},
+            },
+        },
+    )
+    model = TFTWithJEPA(
+        input_dim=5,
+        static_input_dim=4,
+        hidden_dim=16,
+        num_attention_heads=4,
+        num_transformer_blocks=2,
+        jepa_config=config,
+    )
+    checkpoint_path = tmp_path / "model.pt"
+    torch.save(model.state_dict(), checkpoint_path)
+    loaded = TFTWithJEPA(
+        input_dim=5,
+        static_input_dim=4,
+        hidden_dim=16,
+        num_attention_heads=4,
+        num_transformer_blocks=2,
+        jepa_config=config,
+    )
+    loaded.load_state_dict(torch.load(checkpoint_path, weights_only=True))
+
+    output = loaded(
+        {"x": torch.randn(2, 12, 5), "static": torch.randn(2, 4)},
+        return_hidden_states=False,
+    )
 
     assert output["y_pred"].shape == (2, 1)
     assert output["hidden_states"] is None

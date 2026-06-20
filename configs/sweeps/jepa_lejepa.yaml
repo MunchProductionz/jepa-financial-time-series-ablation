@@ -12,13 +12,17 @@ metric:
   goal: minimize
 parameters:
   config:
-    value: configs/exp/lejepa_ablation.yaml
+    value: configs/exp/lejepa_fixed_base.yaml
   jepa.mode:
     value: lejepa
   jepa.num_jepa_layers:
-    values: [0, 1, 2, 3, 4]
-  jepa.global_weight:
-    values: [0.001, 0.01, 0.05, 0.1]
+    values: [1, 2, 3, 4]
+  jepa.lejepa.loss_mix.mode:
+    value: fixed
+  jepa.lejepa.loss_mix.lambda_pred:
+    values: [0.0, 0.01, 0.05, 0.1]
+  jepa.lejepa.loss_mix.lambda_sigreg:
+    values: [0.0, 0.01, 0.05, 0.1]
   jepa.projection_dim:
     values: [64, 128, 256]
   jepa.horizons:
@@ -28,8 +32,18 @@ parameters:
       - [1, 5, 20, 60]
   jepa.lejepa.detach_target:
     values: [false, true]
+  jepa.lejepa.representation.mode:
+    values: [projected, direct_h, adapter_whitened]
+  jepa.lejepa.representation.whitening:
+    values: [layer_norm, l2]
+  jepa.lejepa.representation.domain_context.enabled:
+    values: [false, true]
   jepa.lejepa.auxiliary.gradient_strategy.name:
-    values: [global_weighted, local_recompute]
+    value: global_weighted
+  evaluation.portfolio_quantile:
+    value: 0.1
+  evaluation.transaction_cost_bps:
+    value: 10.0
   logging.wandb.enabled:
     value: true
   logging.wandb.mode:
