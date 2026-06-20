@@ -17,7 +17,7 @@ data:
     - "S&P div yield"
     - "S&P PE ratio"
   macro_missing: ignore
-  limit: 10 # null uses all ticker files; integer caps the number of files
+  limit: null # null uses all ticker files; integer caps the number of files
   start_date: "2015-01-01" # earliest: "1960-01-01"
   end_date: "2025-12-31" # latest: "2025-12-31"
   fast_feature_columns:
