@@ -49,5 +49,6 @@ def build_model_bundle(
                 num_transformer_blocks=config.model.num_transformer_blocks,
                 config=config.jepa,
                 dropout=config.model.dropout,
+                static_input_dim=static_input_dim,
             )
     return ModelBundle(model=model, criterion=criterion, jepa=jepa_module)

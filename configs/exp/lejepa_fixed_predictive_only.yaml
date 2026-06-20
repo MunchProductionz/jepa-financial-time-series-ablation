@@ -1,0 +1,18 @@
+defaults:
+  - lejepa_fixed_base
+  - _self_
+
+run_name: tft_lejepa_fixed_predictive_only_last1_h1
+
+jepa:
+  lejepa:
+    loss_mix:
+      mode: fixed
+      lambda_pred: 0.05
+      lambda_sigreg: 0.0
+    sigreg:
+      enabled: false
+
+logging:
+  wandb:
+    tags: ["lejepa", "fixed", "predictive_only", "last1", "horizon_1"]

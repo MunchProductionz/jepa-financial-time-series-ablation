@@ -1,0 +1,24 @@
+defaults:
+  - lejepa_fixed_base
+  - _self_
+
+run_name: tft_lejepa_fixed_sigreg_only_direct_h_last1_h1
+
+jepa:
+  projection_dim: 128
+  lejepa:
+    loss_mix:
+      mode: fixed
+      lambda_pred: 0.0
+      lambda_sigreg: 0.05
+    sigreg:
+      enabled: true
+      apply_to: context_only
+    representation:
+      mode: direct_h
+      domain_context:
+        enabled: false
+
+logging:
+  wandb:
+    tags: ["lejepa", "fixed", "sigreg_only", "direct_h", "last1"]

@@ -32,7 +32,7 @@ from ablation_study_jepa.evaluation.analysis_artifacts import (
     update_run_manifests,
     utc_now,
 )
-from ablation_study_jepa.evaluation.metrics import compute_metrics
+from ablation_study_jepa.evaluation.metrics import compute_prediction_frame_metrics
 from ablation_study_jepa.evaluation.predictions import (
     PREDICTION_COLUMNS,
     collect_predictions,
@@ -454,12 +454,18 @@ class ExperimentRunner:
             self.config.evaluation.metrics,
             split="val",
             require_nonempty=True,
+            portfolio_quantile=self.config.evaluation.portfolio_quantile,
+            annualization_factor=self.config.evaluation.annualization_factor,
+            transaction_cost_bps=self.config.evaluation.transaction_cost_bps,
         )
         test_metrics = _compute_prediction_metrics(
             test_predictions,
             self.config.evaluation.metrics,
             split="test",
             require_nonempty=False,
+            portfolio_quantile=self.config.evaluation.portfolio_quantile,
+            annualization_factor=self.config.evaluation.annualization_factor,
+            transaction_cost_bps=self.config.evaluation.transaction_cost_bps,
         )
 
         metrics = {
@@ -638,6 +644,9 @@ def _compute_prediction_metrics(
     metric_names: list[str],
     split: str,
     require_nonempty: bool,
+    portfolio_quantile: float = 0.1,
+    annualization_factor: int = 252,
+    transaction_cost_bps: float = 0.0,
 ) -> dict[str, float]:
     required_columns = {"y_true", "y_pred"}
     missing = sorted(required_columns.difference(predictions.columns))
@@ -647,10 +656,12 @@ def _compute_prediction_metrics(
         if require_nonempty:
             raise RuntimeError(f"{split} predictions are empty")
         return {name: float("nan") for name in metric_names}
-    return compute_metrics(
-        predictions["y_true"].to_numpy(),
-        predictions["y_pred"].to_numpy(),
+    return compute_prediction_frame_metrics(
+        predictions,
         metric_names,
+        portfolio_quantile=portfolio_quantile,
+        annualization_factor=annualization_factor,
+        transaction_cost_bps=transaction_cost_bps,
     )
 
 

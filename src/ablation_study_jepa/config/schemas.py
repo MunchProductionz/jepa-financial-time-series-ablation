@@ -91,12 +91,30 @@ class LeJEPAPredictionLoss(str, Enum):
 
 class LeJEPALossMixMode(str, Enum):
     LAMBDA_SIGREG = "lambda_sigreg"
+    FIXED = "fixed"
 
 
 class SIGRegApplyTo(str, Enum):
     CONTEXT_ONLY = "context_only"
     TARGETS_ONLY = "targets_only"
     CONTEXT_AND_TARGETS = "context_and_targets"
+
+
+class LeJEPARepresentationMode(str, Enum):
+    PROJECTED = "projected"
+    DIRECT_H = "direct_h"
+    ADAPTER_WHITENED = "adapter_whitened"
+
+
+class LeJEPAWhiteningNorm(str, Enum):
+    NONE = "none"
+    LAYER_NORM = "layer_norm"
+    BATCH_NORM = "batch_norm"
+    L2 = "l2"
+
+
+class DomainContextSource(str, Enum):
+    STATIC = "static"
 
 
 class AuxiliaryGradientStrategy(str, Enum):
@@ -152,6 +170,7 @@ class JEPACommonAuxiliaryWarmupConfig(ExtraForbidModel):
 class JEPACommonAuxiliaryDiagnosticsConfig(ExtraForbidModel):
     log_aux_loss_ratios: bool = True
     log_gradient_norms: bool = False
+    log_representation_stats: bool = False
 
 
 class JEPACommonAuxiliaryConfig(ExtraForbidModel):
@@ -218,14 +237,29 @@ class ContrastiveJEPAConfig(ExtraForbidModel):
 
 class LeJEPALossMixConfig(ExtraForbidModel):
     mode: LeJEPALossMixMode = LeJEPALossMixMode.LAMBDA_SIGREG
+    lambda_pred: float | None = None
     lambda_sigreg: float = 0.5
 
-    @field_validator("lambda_sigreg")
+    @field_validator("lambda_pred", "lambda_sigreg")
     @classmethod
-    def _valid_lambda_sigreg(cls, value: float) -> float:
-        if value < 0.0 or value > 1.0:
-            raise ValueError("lambda_sigreg must be between 0 and 1")
+    def _nonnegative_loss_weight(cls, value: float | None) -> float | None:
+        if value is not None and value < 0.0:
+            raise ValueError("LeJEPA loss weights must be non-negative")
         return value
+
+    @model_validator(mode="after")
+    def _validate_loss_mix(self) -> "LeJEPALossMixConfig":
+        if self.mode == LeJEPALossMixMode.LAMBDA_SIGREG:
+            if self.lambda_sigreg > 1.0:
+                raise ValueError("lambda_sigreg must be between 0 and 1 in lambda_sigreg mode")
+        elif self.lambda_pred is None:
+            self.lambda_pred = 1.0
+        return self
+
+    def coefficients(self) -> tuple[float, float]:
+        if self.mode == LeJEPALossMixMode.LAMBDA_SIGREG:
+            return 1.0 - self.lambda_sigreg, self.lambda_sigreg
+        return float(1.0 if self.lambda_pred is None else self.lambda_pred), self.lambda_sigreg
 
 
 class SIGRegConfig(ExtraForbidModel):
@@ -252,11 +286,43 @@ class SIGRegConfig(ExtraForbidModel):
         return value
 
 
+class LeJEPADomainContextConfig(ExtraForbidModel):
+    enabled: bool = False
+    source: DomainContextSource = DomainContextSource.STATIC
+    input_dim: int | None = None
+
+    @field_validator("input_dim")
+    @classmethod
+    def _positive_input_dim(cls, value: int | None) -> int | None:
+        if value is not None and value <= 0:
+            raise ValueError("domain_context.input_dim must be positive when set")
+        return value
+
+
+class LeJEPARepresentationConfig(ExtraForbidModel):
+    mode: LeJEPARepresentationMode = LeJEPARepresentationMode.PROJECTED
+    adapter_dim: int | None = None
+    whitening: LeJEPAWhiteningNorm = LeJEPAWhiteningNorm.LAYER_NORM
+    domain_context: LeJEPADomainContextConfig = Field(
+        default_factory=LeJEPADomainContextConfig
+    )
+
+    @field_validator("adapter_dim")
+    @classmethod
+    def _positive_adapter_dim(cls, value: int | None) -> int | None:
+        if value is not None and value <= 0:
+            raise ValueError("adapter_dim must be positive when set")
+        return value
+
+
 class LeJEPAConfig(ExtraForbidModel):
     prediction_loss: LeJEPAPredictionLoss = LeJEPAPredictionLoss.MSE
     detach_target: bool = True
     loss_mix: LeJEPALossMixConfig = Field(default_factory=LeJEPALossMixConfig)
     sigreg: SIGRegConfig = Field(default_factory=SIGRegConfig)
+    representation: LeJEPARepresentationConfig = Field(
+        default_factory=LeJEPARepresentationConfig
+    )
     auxiliary: JEPACommonAuxiliaryConfig = Field(default_factory=JEPACommonAuxiliaryConfig)
 
 
@@ -754,8 +820,32 @@ class EvaluationConfig(ExtraForbidModel):
             "top_bottom_quantile_spread",
         ]
     )
+    portfolio_quantile: float = 0.2
+    annualization_factor: int = 252
+    transaction_cost_bps: float = 0.0
     save_predictions: bool = True
     predictions_dir: Path = Path("predictions")
+
+    @field_validator("portfolio_quantile")
+    @classmethod
+    def _valid_portfolio_quantile(cls, value: float) -> float:
+        if value <= 0.0 or value >= 0.5:
+            raise ValueError("evaluation.portfolio_quantile must be between 0 and 0.5")
+        return value
+
+    @field_validator("annualization_factor")
+    @classmethod
+    def _positive_annualization_factor(cls, value: int) -> int:
+        if value <= 0:
+            raise ValueError("evaluation.annualization_factor must be positive")
+        return value
+
+    @field_validator("transaction_cost_bps")
+    @classmethod
+    def _nonnegative_transaction_cost(cls, value: float) -> float:
+        if value < 0.0:
+            raise ValueError("evaluation.transaction_cost_bps must be non-negative")
+        return value
 
 
 class ExperimentConfig(ExtraForbidModel):

@@ -37,9 +37,18 @@ Run these first on the real panel:
 
 - Baseline TFT with JEPA disabled: `configs/exp/tft.yaml`.
 - Contrastive JEPA: `configs/exp/contrastive_jepa_ablation.yaml`.
-- LeJEPA: `configs/exp/lejepa_ablation.yaml`.
+- Legacy LeJEPA ratio mix: `configs/exp/lejepa_ablation.yaml`.
+- Fixed-coefficient LeJEPA combined predictive plus SIGReg: `configs/exp/lejepa_fixed_base.yaml`.
 
 For each JEPA mode, compare against the same baseline seed, split plan, target horizon, feature set, model size, and training budget.
+
+The config selection is:
+
+- `tft`: `TFT` model target, `jepa.enabled: false`.
+- `contrastive`: `TFTWithJEPA`, `jepa.enabled: true`, `jepa.mode: contrastive`.
+- `lejepa`: `TFTWithJEPA`, `jepa.enabled: true`, `jepa.mode: lejepa`.
+
+Contrastive JEPA and LeJEPA/SIGReg are separate branches. Do not mix their losses unless you add an explicit combined config.
 
 ## Primary Ablations
 
@@ -70,10 +79,55 @@ For contrastive JEPA:
 
 For LeJEPA:
 
-- `jepa.lejepa.loss_mix.lambda_sigreg`: `[0.01, 0.05, 0.1, 0.5]`.
+- Prefer fixed coefficients for the main ablation:
+  - `jepa.global_weight: 1.0`
+  - `jepa.lejepa.loss_mix.mode: fixed`
+  - `jepa.lejepa.loss_mix.lambda_pred`: `[0.0, 0.01, 0.05, 0.1]`
+  - `jepa.lejepa.loss_mix.lambda_sigreg`: `[0.0, 0.01, 0.05, 0.1]`
+- The legacy ratio config remains available through `jepa.lejepa.loss_mix.mode: lambda_sigreg`, where `lambda_sigreg` must be in `[0, 1]`.
 - `jepa.lejepa.detach_target`: keep `true` as the conservative default; test `false` only after the default is stable.
 - `jepa.lejepa.sigreg.apply_to`: `context_only` first, then `context_and_targets`.
+- `jepa.lejepa.representation.mode`:
+  - `projected`: original JEPA projector path.
+  - `direct_h`: directly regularize/predict the native block output `h_l`.
+  - `adapter_whitened`: use `u_l=A_l(norm(h_l), c)`, `z_l=W_l(u_l)`, and apply SIGReg to `z_l`.
+- `jepa.lejepa.representation.domain_context.enabled`: compare `false` vs `true`; the current source is existing static features such as sector one-hots.
 - SIGReg slices and t-grid only after the main loss-weighting behavior is understood.
+
+Fixed-coefficient LeJEPA config entry points:
+
+- Predictive only: `configs/exp/lejepa_fixed_predictive_only.yaml`.
+- SIGReg only on native hidden state `h_l`: `configs/exp/lejepa_fixed_sigreg_only_direct_h.yaml`.
+- SIGReg only on adapter/whitened `z_l`: `configs/exp/lejepa_fixed_sigreg_only_adapter_whitened.yaml`.
+- Predictive plus SIGReg on adapter/whitened `z_l`: `configs/exp/lejepa_fixed_predictive_sigreg_adapter_whitened.yaml`.
+- Domain-conditioned adapter: `configs/exp/lejepa_fixed_domain_adapter.yaml`.
+- No-stop-gradient target: `configs/exp/lejepa_fixed_no_stop_gradient.yaml`.
+- Multiple taps: `configs/exp/lejepa_fixed_multi_tap.yaml`.
+
+These cover the first ablation set:
+
+- supervised TFT only,
+- contrastive JEPA only,
+- LeJEPA/SIGReg only,
+- predictive auxiliary only,
+- SIGReg only,
+- predictive plus SIGReg,
+- direct SIGReg on `h_l`,
+- structured adapter plus whitening with SIGReg on `z_l`,
+- with and without domain-conditioned adapters,
+- one tap and multiple taps,
+- stop-gradient and no-stop-gradient targets,
+- different `lambda_pred` and `lambda_sigreg` values.
+
+## Evaluation Metrics
+
+The required comparison should include predictive and economic metrics. The fixed LeJEPA configs request:
+
+- Predictive: `rmse`, `mae`, `spearman_rank_ic`, `directional_accuracy`, `positive_prediction_share`.
+- Portfolio/economic: `long_short_decile_return`, `long_short_decile_cagr`, `long_short_decile_annualized_volatility`, `long_short_decile_sharpe`, `long_short_decile_sortino`, `long_short_decile_max_drawdown`, `long_short_decile_hit_rate`, `long_short_decile_turnover`, `long_short_decile_transaction_cost_adjusted_return`, `long_only_decile_return`, `equal_weight_benchmark_return`.
+- Robustness where available: `sector_neutral_spearman_rank_ic`.
+
+Set `evaluation.portfolio_quantile: 0.1` for decile portfolios and `evaluation.transaction_cost_bps` for transaction-cost-adjusted metrics. Country, size, value, momentum, volatility, liquidity, and regime-neutral diagnostics require those columns to be present or added as future as-of features; do not derive them from future realized returns.
 
 ## Acceptance Checks Before Comparing Metrics
 
@@ -84,4 +138,8 @@ For every run, inspect:
 - `training_history/combined_epoch_history.csv`.
 - `training_history/plots/loss_history.svg`.
 - `train/jepa_weighted_to_supervised_loss_ratio` when JEPA is enabled.
+- `train/jepa_prediction_loss`, `train/jepa_sigreg_loss`, `train/jepa_lambda_pred`, and `train/jepa_lambda_sigreg` for LeJEPA fixed-coefficient runs.
+- Optional representation diagnostics for `h`, `u`, and `z` only when `log_representation_stats: true`.
 - Gradient diagnostics only when `log_gradient_norms: true`, because they are more expensive.
+
+Auxiliary diagnostics are not acceptance criteria by themselves. A run with more isotropic `z_l` is only useful if it improves held-out prediction and portfolio metrics.

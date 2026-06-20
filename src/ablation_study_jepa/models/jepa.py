@@ -9,7 +9,14 @@ import torch
 from torch import nn
 from torch.nn import functional as F
 
-from ablation_study_jepa.config.schemas import JEPAConfig, JEPAMode, NegativeStrategy, SIGRegApplyTo
+from ablation_study_jepa.config.schemas import (
+    JEPAConfig,
+    JEPAMode,
+    LeJEPARepresentationMode,
+    LeJEPAWhiteningNorm,
+    NegativeStrategy,
+    SIGRegApplyTo,
+)
 
 
 class ResidualMLPPredictor(nn.Module):
@@ -26,6 +33,22 @@ class ResidualMLPPredictor(nn.Module):
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         return x + self.net(x)
+
+
+def _build_predictor(dim: int, predictor_type: str = "mlp", dropout: float = 0.1) -> nn.Module:
+    if predictor_type == "linear":
+        return nn.Linear(dim, dim)
+    if predictor_type == "residual_mlp":
+        return ResidualMLPPredictor(dim, dropout=dropout)
+    if predictor_type == "mlp":
+        return nn.Sequential(
+            nn.LayerNorm(dim),
+            nn.Linear(dim, dim * 2),
+            nn.GELU(),
+            nn.Dropout(dropout),
+            nn.Linear(dim * 2, dim),
+        )
+    raise ValueError(f"Unknown predictor_type: {predictor_type}")
 
 
 class JEPAHead(nn.Module):
@@ -51,20 +74,11 @@ class JEPAHead(nn.Module):
         self.horizon_embedding = (
             nn.Embedding(len(self.horizons), projection_dim) if len(self.horizons) > 1 else None
         )
-        if predictor_type == "linear":
-            self.predictor = nn.Linear(projection_dim, projection_dim)
-        elif predictor_type == "residual_mlp":
-            self.predictor = ResidualMLPPredictor(projection_dim, dropout=dropout)
-        elif predictor_type == "mlp":
-            self.predictor = nn.Sequential(
-                nn.LayerNorm(projection_dim),
-                nn.Linear(projection_dim, projection_dim * 2),
-                nn.GELU(),
-                nn.Dropout(dropout),
-                nn.Linear(projection_dim * 2, projection_dim),
-            )
-        else:
-            raise ValueError(f"Unknown predictor_type: {predictor_type}")
+        self.predictor = _build_predictor(
+            dim=projection_dim,
+            predictor_type=predictor_type,
+            dropout=dropout,
+        )
 
     def encode_context(self, hidden_state: torch.Tensor) -> torch.Tensor:
         return self.projector(hidden_state)
@@ -87,6 +101,226 @@ class JEPAHead(nn.Module):
     def encode_target(self, hidden_state: torch.Tensor, detach: bool = True) -> torch.Tensor:
         z_target = self.projector(hidden_state)
         return z_target.detach() if detach else z_target
+
+
+class DomainAwareAdapter(nn.Module):
+    """Small adapter A_l(norm(h_l), c) for structured LeJEPA latents."""
+
+    def __init__(
+        self,
+        hidden_dim: int,
+        adapter_dim: int,
+        domain_context_dim: int = 0,
+        dropout: float = 0.1,
+    ) -> None:
+        super().__init__()
+        self.domain_context_dim = int(domain_context_dim)
+        self.hidden_norm = nn.LayerNorm(hidden_dim)
+        self.context_norm = (
+            nn.LayerNorm(self.domain_context_dim) if self.domain_context_dim > 0 else None
+        )
+        self.net = nn.Sequential(
+            nn.Linear(hidden_dim + self.domain_context_dim, adapter_dim),
+            nn.GELU(),
+            nn.Dropout(dropout),
+            nn.Linear(adapter_dim, adapter_dim),
+            nn.GELU(),
+        )
+
+    def forward(
+        self,
+        hidden_state: torch.Tensor,
+        domain_context: torch.Tensor | None = None,
+    ) -> torch.Tensor:
+        inputs = [self.hidden_norm(hidden_state)]
+        if self.domain_context_dim > 0:
+            if domain_context is None:
+                raise RuntimeError("LeJEPA domain-conditioned adapter requires domain_context")
+            if domain_context.ndim != 2:
+                raise ValueError("domain_context must have shape [batch, context_dim]")
+            if domain_context.size(-1) != self.domain_context_dim:
+                raise ValueError(
+                    f"domain_context dim {domain_context.size(-1)} does not match "
+                    f"configured dim {self.domain_context_dim}"
+                )
+            inputs.append(self.context_norm(domain_context.to(dtype=hidden_state.dtype)))
+        return self.net(torch.cat(inputs, dim=-1))
+
+
+class WhiteningHead(nn.Module):
+    """Simple W_l head for the normalized auxiliary latent z_l."""
+
+    def __init__(
+        self,
+        input_dim: int,
+        output_dim: int,
+        norm: LeJEPAWhiteningNorm | str = LeJEPAWhiteningNorm.LAYER_NORM,
+    ) -> None:
+        super().__init__()
+        self.norm = LeJEPAWhiteningNorm(norm)
+        self.linear = nn.Linear(input_dim, output_dim)
+        if self.norm == LeJEPAWhiteningNorm.LAYER_NORM:
+            self.normalizer: nn.Module | None = nn.LayerNorm(output_dim)
+        elif self.norm == LeJEPAWhiteningNorm.BATCH_NORM:
+            # No running statistics: auxiliary heads are training-only and should
+            # not carry batch-history state into evaluation/inference behavior.
+            self.normalizer = nn.BatchNorm1d(output_dim, track_running_stats=False)
+        else:
+            self.normalizer = None
+
+    def forward(self, u: torch.Tensor) -> torch.Tensor:
+        z = self.linear(u)
+        if self.norm == LeJEPAWhiteningNorm.LAYER_NORM and self.normalizer is not None:
+            return self.normalizer(z)
+        if self.norm == LeJEPAWhiteningNorm.BATCH_NORM and self.normalizer is not None:
+            if z.size(0) < 2:
+                return F.layer_norm(z, z.shape[-1:])
+            return self.normalizer(z)
+        if self.norm == LeJEPAWhiteningNorm.L2:
+            return F.normalize(z, dim=-1)
+        return z
+
+
+class LeJEPAHead(nn.Module):
+    """LeJEPA head supporting legacy projected, direct-h, and adapter-whitened paths."""
+
+    def __init__(
+        self,
+        hidden_dim: int,
+        projection_dim: int,
+        predictor_type: str = "mlp",
+        horizons: list[int] | None = None,
+        dropout: float = 0.1,
+        mode: LeJEPARepresentationMode | str = LeJEPARepresentationMode.PROJECTED,
+        adapter_dim: int | None = None,
+        whitening: LeJEPAWhiteningNorm | str = LeJEPAWhiteningNorm.LAYER_NORM,
+        domain_context_dim: int = 0,
+    ) -> None:
+        super().__init__()
+        self.horizons = list(horizons or [1])
+        self.horizon_to_index = {int(h): idx for idx, h in enumerate(self.horizons)}
+        self.mode = LeJEPARepresentationMode(mode)
+        self.domain_context_dim = int(domain_context_dim)
+        self.projector: nn.Module | None = None
+        self.adapter: DomainAwareAdapter | None = None
+        self.whitening: WhiteningHead | None = None
+
+        if self.mode == LeJEPARepresentationMode.PROJECTED:
+            self.latent_dim = projection_dim
+            self.sigreg_dim = projection_dim
+            self.projector = nn.Sequential(
+                nn.LayerNorm(hidden_dim),
+                nn.Linear(hidden_dim, projection_dim),
+                nn.GELU(),
+                nn.Linear(projection_dim, projection_dim),
+            )
+        elif self.mode == LeJEPARepresentationMode.DIRECT_H:
+            self.latent_dim = hidden_dim
+            self.sigreg_dim = hidden_dim
+        elif self.mode == LeJEPARepresentationMode.ADAPTER_WHITENED:
+            adapter_dim = adapter_dim or projection_dim
+            self.latent_dim = projection_dim
+            self.sigreg_dim = projection_dim
+            self.adapter = DomainAwareAdapter(
+                hidden_dim=hidden_dim,
+                adapter_dim=adapter_dim,
+                domain_context_dim=self.domain_context_dim,
+                dropout=dropout,
+            )
+            self.whitening = WhiteningHead(
+                input_dim=adapter_dim,
+                output_dim=projection_dim,
+                norm=whitening,
+            )
+        else:  # pragma: no cover - exhaustive enum guard.
+            raise ValueError(f"Unknown LeJEPA representation mode: {self.mode}")
+
+        self.horizon_embedding = (
+            nn.Embedding(len(self.horizons), self.latent_dim) if len(self.horizons) > 1 else None
+        )
+        self.predictor = _build_predictor(
+            dim=self.latent_dim,
+            predictor_type=predictor_type,
+            dropout=dropout,
+        )
+
+    def encode_context(
+        self,
+        hidden_state: torch.Tensor,
+        domain_context: torch.Tensor | None = None,
+    ) -> torch.Tensor:
+        return self._encode(hidden_state, domain_context)
+
+    def predict_from_latent(self, z_context: torch.Tensor, horizon: int) -> torch.Tensor:
+        if self.horizon_embedding is not None:
+            index = self.horizon_to_index[int(horizon)]
+            horizon_index = torch.full(
+                (z_context.size(0),),
+                index,
+                dtype=torch.long,
+                device=z_context.device,
+            )
+            z_context = z_context + self.horizon_embedding(horizon_index)
+        return self.predictor(z_context)
+
+    def predict_from_context(
+        self,
+        hidden_state: torch.Tensor,
+        horizon: int,
+        domain_context: torch.Tensor | None = None,
+    ) -> torch.Tensor:
+        return self.predict_from_latent(self.encode_context(hidden_state, domain_context), horizon)
+
+    def encode_target(
+        self,
+        hidden_state: torch.Tensor,
+        detach: bool = True,
+        domain_context: torch.Tensor | None = None,
+    ) -> torch.Tensor:
+        z_target = self._encode(hidden_state, domain_context)
+        return z_target.detach() if detach else z_target
+
+    def sigreg_embedding(
+        self,
+        hidden_state: torch.Tensor,
+        domain_context: torch.Tensor | None = None,
+        detach: bool = False,
+    ) -> torch.Tensor:
+        embedding = self._encode(hidden_state, domain_context)
+        return embedding.detach() if detach else embedding
+
+    def representation_latents(
+        self,
+        hidden_state: torch.Tensor,
+        domain_context: torch.Tensor | None = None,
+    ) -> dict[str, torch.Tensor]:
+        latents = {"h": hidden_state}
+        if self.mode == LeJEPARepresentationMode.ADAPTER_WHITENED:
+            if self.adapter is None or self.whitening is None:
+                raise RuntimeError("adapter_whitened mode is missing adapter modules")
+            u = self.adapter(hidden_state, domain_context)
+            z = self.whitening(u)
+            latents["u"] = u
+            latents["z"] = z
+        elif self.mode == LeJEPARepresentationMode.PROJECTED:
+            latents["z"] = self._encode(hidden_state, domain_context)
+        return latents
+
+    def _encode(
+        self,
+        hidden_state: torch.Tensor,
+        domain_context: torch.Tensor | None = None,
+    ) -> torch.Tensor:
+        if self.mode == LeJEPARepresentationMode.DIRECT_H:
+            return hidden_state
+        if self.mode == LeJEPARepresentationMode.PROJECTED:
+            if self.projector is None:
+                raise RuntimeError("projected mode is missing projector")
+            return self.projector(hidden_state)
+        if self.adapter is None or self.whitening is None:
+            raise RuntimeError("adapter_whitened mode is missing adapter modules")
+        u = self.adapter(hidden_state, domain_context)
+        return self.whitening(u)
 
 
 @dataclass
@@ -348,6 +582,7 @@ class MultiLayerJEPAModule(nn.Module):
         num_transformer_blocks: int,
         config: JEPAConfig,
         dropout: float = 0.1,
+        static_input_dim: int = 0,
     ) -> None:
         super().__init__()
         self.config = config
@@ -356,18 +591,8 @@ class MultiLayerJEPAModule(nn.Module):
         self.layer_weights = config.normalized_layer_weights(self.selected_layers)
         self.horizon_weights = config.normalized_horizon_weights()
         self.horizons = list(config.horizons)
-        self.heads = nn.ModuleDict(
-            {
-                str(layer): JEPAHead(
-                    hidden_dim=hidden_dim,
-                    projection_dim=config.projection_dim,
-                    predictor_type=config.predictor_type.value,
-                    horizons=self.horizons,
-                    dropout=dropout,
-                )
-                for layer in self.selected_layers
-            }
-        )
+        self.domain_context_dim = self._resolve_domain_context_dim(static_input_dim)
+        self.heads = nn.ModuleDict(self._build_heads(hidden_dim, config, dropout))
         self.contrastive_loss = ContrastiveLoss(temperature=config.contrastive.temperature)
         self.negative_sampler = NegativeSampler(
             strategy=config.contrastive.negative_strategy,
@@ -378,8 +603,9 @@ class MultiLayerJEPAModule(nn.Module):
             sector_filtering=config.contrastive.sector_filtering,
             same_asset_negative_min_gap=config.contrastive.same_asset_negative_min_gap,
         )
+        sigreg_dim = self._sigreg_embedding_dim(hidden_dim, config)
         self.sigreg_loss = SIGRegLoss(
-            embedding_dim=config.projection_dim,
+            embedding_dim=sigreg_dim,
             num_slices=config.lejepa.sigreg.num_slices,
             num_t=config.lejepa.sigreg.num_t,
             t_max=config.lejepa.sigreg.t_max,
@@ -387,11 +613,66 @@ class MultiLayerJEPAModule(nn.Module):
             min_batch_size=config.lejepa.sigreg.min_batch_size,
         )
 
+    def _build_heads(
+        self,
+        hidden_dim: int,
+        config: JEPAConfig,
+        dropout: float,
+    ) -> dict[str, nn.Module]:
+        if self.mode == JEPAMode.LEJEPA:
+            representation = config.lejepa.representation
+            return {
+                str(layer): LeJEPAHead(
+                    hidden_dim=hidden_dim,
+                    projection_dim=config.projection_dim,
+                    predictor_type=config.predictor_type.value,
+                    horizons=self.horizons,
+                    dropout=dropout,
+                    mode=representation.mode,
+                    adapter_dim=representation.adapter_dim,
+                    whitening=representation.whitening,
+                    domain_context_dim=self.domain_context_dim,
+                )
+                for layer in self.selected_layers
+            }
+        return {
+            str(layer): JEPAHead(
+                hidden_dim=hidden_dim,
+                projection_dim=config.projection_dim,
+                predictor_type=config.predictor_type.value,
+                horizons=self.horizons,
+                dropout=dropout,
+            )
+            for layer in self.selected_layers
+        }
+
+    def _resolve_domain_context_dim(self, static_input_dim: int) -> int:
+        domain_context = self.config.lejepa.representation.domain_context
+        if self.mode != JEPAMode.LEJEPA or not domain_context.enabled:
+            return 0
+        dim = domain_context.input_dim if domain_context.input_dim is not None else static_input_dim
+        if dim <= 0:
+            raise ValueError(
+                "LeJEPA domain_context.enabled=true requires static_input_dim > 0 "
+                "or jepa.lejepa.representation.domain_context.input_dim"
+            )
+        return int(dim)
+
+    @staticmethod
+    def _sigreg_embedding_dim(hidden_dim: int, config: JEPAConfig) -> int:
+        if (
+            JEPAMode(config.mode) == JEPAMode.LEJEPA
+            and config.lejepa.representation.mode == LeJEPARepresentationMode.DIRECT_H
+        ):
+            return hidden_dim
+        return config.projection_dim
+
     def forward(
         self,
         context_hidden_states: list[torch.Tensor],
         target_hidden_states_by_horizon: dict[int, list[torch.Tensor]],
         metadata: dict[str, Any],
+        domain_context: torch.Tensor | None = None,
     ) -> dict[str, torch.Tensor | dict[str, torch.Tensor]]:
         if not self.selected_layers:
             return self._zero_output(context_hidden_states[-1])
@@ -400,6 +681,7 @@ class MultiLayerJEPAModule(nn.Module):
                 context_hidden_states=context_hidden_states,
                 target_hidden_states_by_horizon=target_hidden_states_by_horizon,
                 metadata=metadata,
+                domain_context=domain_context,
             )
         return self._forward_contrastive(
             context_hidden_states=context_hidden_states,
@@ -450,23 +732,37 @@ class MultiLayerJEPAModule(nn.Module):
         context_hidden_states: list[torch.Tensor],
         target_hidden_states_by_horizon: dict[int, list[torch.Tensor]],
         metadata: dict[str, Any],
+        domain_context: torch.Tensor | None = None,
     ) -> dict[str, torch.Tensor | dict[str, torch.Tensor]]:
         total = torch.zeros((), device=context_hidden_states[-1].device)
         total_prediction = torch.zeros_like(total)
         total_sigreg = torch.zeros_like(total)
         logs: dict[str, torch.Tensor] = {}
         context_embeddings_for_diagnostics: list[torch.Tensor] = []
+        representation_embeddings_for_diagnostics: dict[str, list[torch.Tensor]] = {}
         sigreg_apply_to = SIGRegApplyTo(self.config.lejepa.sigreg.apply_to)
         sigreg_uses_targets = sigreg_apply_to in {
             SIGRegApplyTo.TARGETS_ONLY,
             SIGRegApplyTo.CONTEXT_AND_TARGETS,
         }
+        lambda_pred, lambda_sigreg = self.config.lejepa.loss_mix.coefficients()
+        log_representation_stats = (
+            self.config.lejepa.auxiliary.diagnostics.log_representation_stats
+        )
 
         for layer_weight, layer in zip(self.layer_weights, self.selected_layers, strict=True):
             head = self.heads[str(layer)]
             context_state = context_hidden_states[layer][:, -1, :]
-            z_context_all = head.encode_context(context_state)
+            z_context_all = head.encode_context(context_state, domain_context=domain_context)
             context_embeddings_for_diagnostics.append(z_context_all.detach())
+            if log_representation_stats:
+                for name, tensor in head.representation_latents(
+                    context_state,
+                    domain_context=domain_context,
+                ).items():
+                    representation_embeddings_for_diagnostics.setdefault(name, []).append(
+                        tensor.detach()
+                    )
             layer_prediction = torch.zeros((), device=context_state.device, dtype=context_state.dtype)
             horizon_weight_sum = 0.0
             context_valid_any = torch.zeros(
@@ -502,12 +798,18 @@ class MultiLayerJEPAModule(nn.Module):
                 z_target_prediction = head.encode_target(
                     target_state,
                     detach=self.config.lejepa.detach_target,
+                    domain_context=(
+                        domain_context[valid_mask] if domain_context is not None else None
+                    ),
                 )
                 prediction_loss = F.mse_loss(z_pred, z_target_prediction)
                 if sigreg_uses_targets:
                     target_sigreg_embeddings.append(
-                        head.encode_target(
+                        head.sigreg_embedding(
                             target_state,
+                            domain_context=(
+                                domain_context[valid_mask] if domain_context is not None else None
+                            ),
                             detach=False,
                         )
                     )
@@ -527,10 +829,11 @@ class MultiLayerJEPAModule(nn.Module):
                 apply_to=sigreg_apply_to,
             )
             if self.config.lejepa.sigreg.enabled:
-                lambda_sigreg = self.config.lejepa.loss_mix.lambda_sigreg
-                layer_loss = (1.0 - lambda_sigreg) * layer_prediction + lambda_sigreg * layer_sigreg
-            else:
+                layer_loss = lambda_pred * layer_prediction + lambda_sigreg * layer_sigreg
+            elif self.config.lejepa.loss_mix.mode == "lambda_sigreg":
                 layer_loss = layer_prediction
+            else:
+                layer_loss = lambda_pred * layer_prediction
 
             total = total + float(layer_weight) * layer_loss
             total_prediction = total_prediction + float(layer_weight) * layer_prediction
@@ -538,12 +841,38 @@ class MultiLayerJEPAModule(nn.Module):
             logs[f"jepa_layer_{layer}_loss"] = layer_loss.detach()
             logs[f"jepa_layer_{layer}_prediction_loss"] = layer_prediction.detach()
             logs[f"jepa_layer_{layer}_sigreg_loss"] = layer_sigreg.detach()
+            logs[f"jepa_layer_{layer}_lambda_pred"] = torch.as_tensor(
+                lambda_pred,
+                device=context_state.device,
+                dtype=context_state.dtype,
+            )
+            logs[f"jepa_layer_{layer}_lambda_sigreg"] = torch.as_tensor(
+                lambda_sigreg if self.config.lejepa.sigreg.enabled else 0.0,
+                device=context_state.device,
+                dtype=context_state.dtype,
+            )
 
         logs["jepa_loss"] = total.detach()
         logs["jepa_prediction_loss"] = total_prediction.detach()
         logs["jepa_sigreg_loss"] = total_sigreg.detach()
+        logs["jepa_lambda_pred"] = torch.as_tensor(
+            lambda_pred,
+            device=total.device,
+            dtype=total.dtype,
+        )
+        logs["jepa_lambda_sigreg"] = torch.as_tensor(
+            lambda_sigreg if self.config.lejepa.sigreg.enabled else 0.0,
+            device=total.device,
+            dtype=total.dtype,
+        )
         logs["total_jepa_loss_unweighted"] = total.detach()
         logs.update(self._context_embedding_diagnostics(context_embeddings_for_diagnostics))
+        if log_representation_stats:
+            logs.update(
+                self._representation_embedding_diagnostics(
+                    representation_embeddings_for_diagnostics
+                )
+            )
         return {"loss": total, "logs": logs}
 
     def _compute_layer_sigreg(
@@ -614,6 +943,60 @@ class MultiLayerJEPAModule(nn.Module):
             "jepa_z_context_std_min": std.min().detach(),
             "jepa_z_context_std_max": std.max().detach(),
         }
+
+    @classmethod
+    def _representation_embedding_diagnostics(
+        cls,
+        embeddings_by_name: dict[str, list[torch.Tensor]],
+    ) -> dict[str, torch.Tensor]:
+        logs: dict[str, torch.Tensor] = {}
+        for name, tensors in embeddings_by_name.items():
+            logs.update(cls._embedding_distribution_diagnostics(f"jepa_{name}", tensors))
+        return logs
+
+    @staticmethod
+    def _embedding_distribution_diagnostics(
+        prefix: str,
+        embeddings: list[torch.Tensor],
+    ) -> dict[str, torch.Tensor]:
+        if not embeddings:
+            return {}
+        values = torch.cat(embeddings, dim=0).float()
+        if values.numel() == 0:
+            return {}
+
+        feature_var = values.var(dim=0, unbiased=False)
+        logs = {
+            f"{prefix}_mean_abs": values.abs().mean().detach(),
+            f"{prefix}_feature_variance_mean": feature_var.mean().detach(),
+            f"{prefix}_feature_variance_min": feature_var.min().detach(),
+            f"{prefix}_feature_variance_max": feature_var.max().detach(),
+        }
+        if values.size(0) < 2:
+            zero = values.sum() * 0.0
+            logs[f"{prefix}_cov_identity_mse"] = zero.detach()
+            logs[f"{prefix}_effective_rank"] = zero.detach()
+            return logs
+
+        centered = values - values.mean(dim=0, keepdim=True)
+        covariance = centered.T @ centered / max(1, values.size(0) - 1)
+        identity = torch.eye(
+            covariance.size(0),
+            dtype=covariance.dtype,
+            device=covariance.device,
+        )
+        eigvals = torch.linalg.eigvalsh(covariance).clamp_min(0.0)
+        eig_sum = eigvals.sum()
+        if bool((eig_sum > 0).item()):
+            probabilities = eigvals / eig_sum
+            entropy = -(probabilities * probabilities.clamp_min(1e-12).log()).sum()
+            effective_rank = entropy.exp()
+        else:
+            effective_rank = eig_sum
+        logs[f"{prefix}_cov_identity_mse"] = (covariance - identity).square().mean().detach()
+        logs[f"{prefix}_effective_rank"] = effective_rank.detach()
+        logs[f"{prefix}_top_eigenvalue"] = eigvals.max().detach()
+        return logs
 
     @staticmethod
     def _zero_output(reference: torch.Tensor) -> dict[str, torch.Tensor | dict[str, torch.Tensor]]:

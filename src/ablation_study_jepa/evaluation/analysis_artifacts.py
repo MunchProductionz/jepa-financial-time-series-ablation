@@ -150,7 +150,10 @@ def save_analysis_artifacts(
     analysis_dir.mkdir(parents=True, exist_ok=True)
 
     predictions = {"val": val_predictions, "test": test_predictions}
-    portfolio_returns, portfolio_memberships = portfolio_frames(predictions)
+    portfolio_returns, portfolio_memberships = portfolio_frames(
+        predictions,
+        quantile=config.evaluation.portfolio_quantile,
+    )
     paths = {
         "config_summary": _write_csv(
             analysis_dir / "config_summary.csv",
@@ -634,7 +637,17 @@ def config_summary_row(
         "contrastive_temperature": config.jepa.contrastive.temperature,
         "contrastive_negative_strategy": _value(config.jepa.contrastive.negative_strategy),
         "lejepa_lambda_sigreg": config.jepa.lejepa.loss_mix.lambda_sigreg,
+        "lejepa_lambda_pred": config.jepa.lejepa.loss_mix.lambda_pred,
+        "lejepa_loss_mix_mode": _value(config.jepa.lejepa.loss_mix.mode),
         "lejepa_sigreg_apply_to": _value(config.jepa.lejepa.sigreg.apply_to),
+        "lejepa_representation_mode": _value(config.jepa.lejepa.representation.mode),
+        "lejepa_whitening": _value(config.jepa.lejepa.representation.whitening),
+        "lejepa_adapter_dim": config.jepa.lejepa.representation.adapter_dim,
+        "lejepa_domain_context_enabled": (
+            config.jepa.lejepa.representation.domain_context.enabled
+        ),
+        "evaluation_portfolio_quantile": config.evaluation.portfolio_quantile,
+        "evaluation_transaction_cost_bps": config.evaluation.transaction_cost_bps,
         "wandb_group": config.logging.wandb.group,
         "wandb_tags": _json_string(config.logging.wandb.tags),
     }

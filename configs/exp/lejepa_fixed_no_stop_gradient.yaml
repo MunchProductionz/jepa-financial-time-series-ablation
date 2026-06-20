@@ -1,0 +1,16 @@
+defaults:
+  - lejepa_fixed_base
+  - _self_
+
+run_name: tft_lejepa_fixed_no_stop_gradient_last1_h1
+
+jepa:
+  lejepa:
+    detach_target: false
+    auxiliary:
+      gradient_strategy:
+        compute_target_with_no_grad: false
+
+logging:
+  wandb:
+    tags: ["lejepa", "fixed", "no_stop_gradient", "last1", "horizon_1"]

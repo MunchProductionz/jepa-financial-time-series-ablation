@@ -38,6 +38,45 @@ def test_optional_empty_test_metrics_return_nan() -> None:
     assert all(pd.isna(value) for value in metrics.values())
 
 
+def test_prediction_metrics_include_requested_economic_metrics() -> None:
+    frame = pd.DataFrame(
+        {
+            "anchor_date": ["2024-01-02"] * 4 + ["2024-01-03"] * 4,
+            "asset_id": ["A", "B", "C", "D", "A", "B", "C", "D"],
+            "sector": ["tech", "tech", "energy", "energy"] * 2,
+            "y_true": [0.01, -0.02, 0.03, -0.01, 0.02, -0.01, 0.01, -0.03],
+            "y_pred": [0.04, -0.03, 0.02, -0.02, 0.03, -0.02, 0.01, -0.04],
+            "y_true_return": [0.01, -0.02, 0.03, -0.01, 0.02, -0.01, 0.01, -0.03],
+        }
+    )
+
+    metrics = _compute_prediction_metrics(
+        frame,
+        metric_names=[
+            "rmse",
+            "positive_prediction_share",
+            "long_short_decile_return",
+            "long_short_decile_sharpe",
+            "long_short_decile_turnover",
+            "long_short_decile_transaction_cost_adjusted_return",
+            "sector_neutral_spearman_rank_ic",
+        ],
+        split="val",
+        require_nonempty=True,
+        transaction_cost_bps=10.0,
+    )
+
+    assert metrics["rmse"] >= 0.0
+    assert metrics["positive_prediction_share"] == pytest.approx(0.5)
+    assert metrics["long_short_decile_return"] > 0.0
+    assert "long_short_decile_sharpe" in metrics
+    assert "long_short_decile_turnover" in metrics
+    assert metrics["long_short_decile_transaction_cost_adjusted_return"] <= metrics[
+        "long_short_decile_return"
+    ]
+    assert pd.notna(metrics["sector_neutral_spearman_rank_ic"])
+
+
 def test_prediction_artifacts_are_saved_inside_run_directory(tmp_path) -> None:
     run_dir = make_prediction_run_dir(
         tmp_path,

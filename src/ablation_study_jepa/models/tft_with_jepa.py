@@ -55,6 +55,7 @@ class TFTWithJEPA(TFT):
                 num_transformer_blocks=num_transformer_blocks,
                 config=jepa_config,
                 dropout=dropout,
+                static_input_dim=static_input_dim,
             )
 
     @property
@@ -68,6 +69,7 @@ class TFTWithJEPA(TFT):
         metadata: dict[str, Any],
         context_transformer_input: torch.Tensor | None = None,
         attention_mask: torch.Tensor | None = None,
+        domain_context: torch.Tensor | None = None,
     ) -> dict[str, torch.Tensor | dict[str, torch.Tensor]]:
         if self.jepa_module is None:
             device = context_hidden_states[-1].device
@@ -88,6 +90,7 @@ class TFTWithJEPA(TFT):
             context_hidden_states=context_hidden_states,
             target_hidden_states_by_horizon=target_hidden_states_by_horizon,
             metadata=metadata,
+            domain_context=domain_context,
         )
 
     def _use_local_recompute(self) -> bool:
