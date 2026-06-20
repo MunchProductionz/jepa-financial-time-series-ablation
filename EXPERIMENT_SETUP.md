@@ -31,6 +31,53 @@ uv run ablation-study-jepa run --config configs/exp/smoke_long_lejepa.yaml
 
 The short configs are fast sanity checks. The longer configs use more assets, more dates, larger context windows, and sliding windows, so they are closer to the real pipeline without requiring downloaded market data.
 
+## Google Colab Workflow
+
+Use `notebooks/colab_experiment_runner.ipynb` when running the ablation matrix in Google Colab.
+
+The notebook covers two workflows:
+
+- Train and analyze in one session: mount Google Drive, clone or point to the repo, install the package, prepare data, run each config, load artifacts, and export comparison tables.
+- Analyze existing runs only: mount Google Drive, set `PREDICTIONS_DIR` to a previous Drive-backed predictions directory, skip training, and regenerate analysis tables/LaTeX tables from saved outputs.
+
+For code in Colab, either:
+
+- clone the repo from GitHub by setting `REPO_URL` and `BRANCH`;
+- upload a repo zip/folder to Drive and set `REPO_URL = None` plus `REPO_DIR` to that folder;
+- for private repos, use a Colab secret/token or another authenticated GitHub workflow.
+
+For data in Colab, start with `DATA_MODE = "smoke"` to verify the full pipeline. For real experiments, prefer prebuilt data copied to Drive and use `DATA_MODE = "drive_existing"` with paths such as:
+
+```text
+/content/drive/MyDrive/jepa_financial_ablation/data/prices/sp500/data
+/content/drive/MyDrive/jepa_financial_ablation/data/macro/fred_md/fred_md_1960_2025.csv
+```
+
+The notebook writes run artifacts under a Drive-backed `predictions` directory so interrupted Colab sessions do not erase finished results.
+
+### LaTeX Tables
+
+The Colab notebook exports LaTeX tables to:
+
+```text
+/content/drive/MyDrive/jepa_financial_ablation/latex_tables
+```
+
+The reusable exporters live in `src/ablation_study_jepa/evaluation/latex_tables.py`.
+
+Generated tables include:
+
+- `comparison_val_metrics.tex`
+- `comparison_test_metrics.tex`
+- `per_model_window_metrics_<run>_val.tex`
+- `per_model_window_metrics_<run>_test.tex`
+
+Comparison tables use one row per model/config/run and metrics as columns. Metric headers include direction arrows, for example `RMSE ($\downarrow$)` and `Spearman IC ($\uparrow$)`. The best value in each directional metric column is written as `\textbf{...}`. The tables use `booktabs`, so include this in the LaTeX preamble:
+
+```latex
+\usepackage{booktabs}
+```
+
 ## Core Experiment Matrix
 
 Run these first on the real panel:
