@@ -32,6 +32,7 @@ from ablation_study_jepa.evaluation.analysis_artifacts import (
     update_run_manifests,
     utc_now,
 )
+from ablation_study_jepa.evaluation.model_summary import summarize_model
 from ablation_study_jepa.evaluation.metrics import compute_prediction_frame_metrics
 from ablation_study_jepa.evaluation.predictions import (
     PREDICTION_COLUMNS,
@@ -59,6 +60,7 @@ class ExperimentResult:
     analysis_paths: dict[str, Path] = field(default_factory=dict)
     manifest_paths: dict[str, Path] = field(default_factory=dict)
     status_path: Path | None = None
+    model_summary: dict[str, Any] = field(default_factory=dict)
 
 
 def run_experiment(config_path: str | Path) -> ExperimentResult:
@@ -200,6 +202,7 @@ class ExperimentRunner:
         )
 
         window_results: list[dict[str, Any]] = []
+        model_summaries: list[dict[str, Any]] = []
         all_val_predictions: list[pd.DataFrame] = []
         all_test_predictions: list[pd.DataFrame] = []
         for window in window_plan.windows:
@@ -212,8 +215,10 @@ class ExperimentRunner:
             window_results.append(result["metrics"])
             all_val_predictions.append(result["val_predictions"])
             all_test_predictions.append(result["test_predictions"])
+            model_summaries.append(result["model_summary"])
             if result["training_history_path"] is not None:
                 training_history_paths[window.label] = result["training_history_path"]
+        model_summary = model_summaries[0] if model_summaries else {}
 
         val_metrics = _average_metric_dicts(
             [result["val"] for result in window_results],
@@ -267,6 +272,7 @@ class ExperimentRunner:
             run_finished_at=run_finished_at,
             elapsed_seconds=elapsed_seconds,
             training_history_path=training_history_paths.get("combined"),
+            model_summary=model_summary,
         )
         metrics_path = self._save_metrics(
             val_metrics=val_metrics,
@@ -280,6 +286,7 @@ class ExperimentRunner:
             analysis_paths=analysis_paths,
             manifest_paths=manifest_paths,
             status_path=status_path,
+            model_summary=model_summary,
         )
         artifact_paths = {
             "config": config_path,
@@ -299,6 +306,7 @@ class ExperimentRunner:
             finished_at=run_finished_at,
             elapsed_seconds=elapsed_seconds,
             metrics={"val": val_metrics, "test": test_metrics},
+            model_summary=model_summary,
             artifacts={name: str(path) for name, path in artifact_paths.items()},
         )
         artifact_paths["run_status"] = status_path
@@ -316,6 +324,7 @@ class ExperimentRunner:
             artifact_paths=artifact_paths,
             data_provenance=data_provenance,
             code_provenance=code_provenance,
+            model_summary=model_summary,
         )
         print(
             json.dumps(
@@ -355,6 +364,7 @@ class ExperimentRunner:
             analysis_paths=analysis_paths,
             manifest_paths=manifest_paths,
             status_path=status_path,
+            model_summary=model_summary,
         )
 
     def _run_window(
@@ -406,6 +416,11 @@ class ExperimentRunner:
             self.config,
             input_dim=len(self.config.data.feature_columns),
             static_input_dim=len(self.config.data.static_feature_columns),
+        )
+        model_summary = summarize_model(
+            model_bundle.model,
+            config=self.config,
+            jepa_module=model_bundle.jepa,
         )
         data_module = build_data_module(
             self.config,
@@ -494,6 +509,7 @@ class ExperimentRunner:
             "val_predictions": val_predictions,
             "test_predictions": test_predictions,
             "training_history_path": self._window_training_history_path(artifact_dir, window),
+            "model_summary": model_summary,
         }
 
     def _save_metrics(
@@ -509,6 +525,7 @@ class ExperimentRunner:
         analysis_paths: dict[str, Path] | None = None,
         manifest_paths: dict[str, Path] | None = None,
         status_path: Path | None = None,
+        model_summary: dict[str, Any] | None = None,
     ) -> Path:
         output_dir.mkdir(parents=True, exist_ok=True)
         path = output_dir / "metrics.json"
@@ -522,6 +539,7 @@ class ExperimentRunner:
                 "windows": _window_metrics_by_index(window_metrics),
             },
             "config": config_dict,
+            "model_summary": model_summary or {},
             "artifacts": {
                 "config": str(config_path) if config_path is not None else None,
                 "training_history": {

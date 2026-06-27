@@ -73,6 +73,27 @@ def test_analysis_artifacts_write_reusable_tables(tmp_path) -> None:
         run_finished_at="2026-06-16T00:00:10Z",
         elapsed_seconds=10.0,
         training_history_path=history_path,
+        model_summary={
+            "parameter_count": 1234,
+            "trainable_parameter_count": 1200,
+            "non_trainable_parameter_count": 34,
+            "base_parameter_count": 1000,
+            "jepa_parameter_count": 234,
+            "module_counts": {
+                "linear": 12,
+                "lstm_modules": 1,
+                "lstm_layers": 2,
+                "multihead_attention": 4,
+            },
+            "architecture": {
+                "transformer_block_count": 4,
+                "mlp_linear_layer_count": 8,
+                "jepa_predictor_linear_layer_count": 2,
+                "input_dim": 16,
+                "static_input_dim": 4,
+                "hidden_dim": 32,
+            },
+        },
     )
 
     assert {
@@ -106,6 +127,11 @@ def test_analysis_artifacts_write_reusable_tables(tmp_path) -> None:
 
     provenance = json.loads(paths["provenance"].read_text(encoding="utf-8"))
     assert provenance["run"]["metrics"]["val"] == {"mse": 0.1}
+    assert provenance["run"]["model_summary"]["parameter_count"] == 1234
+    config_summary = pd.read_csv(paths["config_summary"])
+    assert config_summary.loc[0, "model_parameter_count"] == 1234
+    assert config_summary.loc[0, "model_transformer_block_count"] == 4
+    assert config_summary.loc[0, "model_lstm_layer_count"] == 2
 
 
 def test_prediction_diagnostics_adds_cross_sectional_ranks() -> None:
@@ -157,12 +183,22 @@ def test_run_manifests_are_upserted_and_grouped_by_study(tmp_path) -> None:
             "splits": {"window_count": 1},
         },
         code_provenance={"git_commit": "commit", "dirty": False},
+        model_summary={
+            "parameter_count": 4321,
+            "trainable_parameter_count": 4300,
+            "non_trainable_parameter_count": 21,
+            "base_parameter_count": 4000,
+            "jepa_parameter_count": 321,
+            "module_counts": {"linear": 10, "lstm_modules": 1, "lstm_layers": 2},
+            "architecture": {"transformer_block_count": 4},
+        },
     )
 
     root = pd.read_csv(paths["runs_manifest"])
     assert len(root) == 1
     assert root.loc[0, "status"] == "completed"
     assert root.loc[0, "val_mse"] == pytest.approx(0.1)
+    assert root.loc[0, "model_parameter_count"] == 4321
     assert root.loc[0, "artifact_metrics"] == str(output_dir / "metrics.json")
 
     grouped = pd.read_csv(paths["study_runs_manifest"])

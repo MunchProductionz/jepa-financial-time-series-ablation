@@ -134,7 +134,8 @@ def test_metrics_json_groups_total_and_window_metrics(tmp_path) -> None:
     )
 
     payload = json.loads(path.read_text(encoding="utf-8"))
-    assert set(payload) == {"artifacts", "config", "metrics", "run_name"}
+    assert set(payload) == {"artifacts", "config", "metrics", "model_summary", "run_name"}
+    assert payload["model_summary"] == {}
     assert payload["metrics"] == {
         "total": {
             "val": {"mse": 0.2},
