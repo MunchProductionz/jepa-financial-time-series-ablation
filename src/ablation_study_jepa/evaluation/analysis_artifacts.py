@@ -16,6 +16,7 @@ import pandas as pd
 from ablation_study_jepa.builders.windows import WindowPlan
 from ablation_study_jepa.config.schemas import ExperimentConfig
 from ablation_study_jepa.evaluation.metrics import compute_metrics
+from ablation_study_jepa.evaluation.model_summary import model_summary_flat_fields
 
 ANALYSIS_DIR_NAME = "analysis"
 PREDICTION_DIAGNOSTIC_COLUMNS = [
@@ -142,6 +143,7 @@ def save_analysis_artifacts(
     run_finished_at: str,
     elapsed_seconds: float,
     training_history_path: str | Path | None = None,
+    model_summary: dict[str, Any] | None = None,
 ) -> dict[str, Path]:
     """Write durable tables for later plots without rerunning training."""
 
@@ -163,6 +165,7 @@ def save_analysis_artifacts(
                         config=config,
                         config_dict=config_dict,
                         output_dir=output_path,
+                        model_summary=model_summary,
                     )
                 ]
             ),
@@ -221,6 +224,7 @@ def save_analysis_artifacts(
                     "elapsed_seconds": elapsed_seconds,
                     "config_hash": config_hash(config_dict),
                     "metrics": {"val": val_metrics, "test": test_metrics},
+                    "model_summary": model_summary or {},
                 },
                 "data": data_provenance,
                 "code": code_provenance,
@@ -246,6 +250,7 @@ def save_run_status(
     elapsed_seconds: float | None = None,
     error: str | None = None,
     metrics: dict[str, Any] | None = None,
+    model_summary: dict[str, Any] | None = None,
     artifacts: dict[str, Any] | None = None,
 ) -> Path:
     path = Path(output_dir) / "run_status.json"
@@ -259,6 +264,7 @@ def save_run_status(
         "error": error,
         "config_hash": config_hash(config_dict),
         "metrics": metrics or {},
+        "model_summary": model_summary or {},
         "artifacts": artifacts or {},
     }
     path.write_text(json.dumps(payload, indent=2, sort_keys=True, default=str), encoding="utf-8")
@@ -280,6 +286,7 @@ def update_run_manifests(
     artifact_paths: dict[str, Path] | None = None,
     data_provenance: dict[str, Any] | None = None,
     code_provenance: dict[str, Any] | None = None,
+    model_summary: dict[str, Any] | None = None,
     error: str | None = None,
 ) -> dict[str, Path]:
     """Upsert run status into root and optional study-level manifests."""
@@ -297,6 +304,7 @@ def update_run_manifests(
         artifact_paths=artifact_paths or {},
         data_provenance=data_provenance or {},
         code_provenance=code_provenance or {},
+        model_summary=model_summary,
         error=error,
     )
     root = Path(predictions_dir)
@@ -591,6 +599,7 @@ def config_summary_row(
     config: ExperimentConfig,
     config_dict: dict[str, Any],
     output_dir: str | Path,
+    model_summary: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     resolved_layers = _resolved_jepa_layers(config)
     return {
@@ -600,6 +609,7 @@ def config_summary_row(
         "seed": config.seed,
         "model_target": config.model.target,
         "criterion": config.model.criterion,
+        **model_summary_flat_fields(model_summary, config),
         "hidden_dim": config.model.hidden_dim,
         "num_transformer_blocks": config.model.num_transformer_blocks,
         "num_attention_heads": config.model.num_attention_heads,
@@ -667,10 +677,16 @@ def manifest_row(
     artifact_paths: dict[str, Path],
     data_provenance: dict[str, Any],
     code_provenance: dict[str, Any],
-    error: str | None,
+    model_summary: dict[str, Any] | None = None,
+    error: str | None = None,
 ) -> dict[str, Any]:
     row = {
-        **config_summary_row(config=config, config_dict=config_dict, output_dir=output_dir),
+        **config_summary_row(
+            config=config,
+            config_dict=config_dict,
+            output_dir=output_dir,
+            model_summary=model_summary,
+        ),
         "status": status,
         "started_at": started_at,
         "finished_at": finished_at,
